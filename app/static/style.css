@@ -1,0 +1,64 @@
+* { box-sizing: border-box; }
+body {
+  font-family: system-ui, sans-serif;
+  background: #0f1117;
+  color: #e6e6e6;
+  margin: 0;
+  padding-bottom: 60px;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px 24px;
+  background: #1a1d27;
+}
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 16px; margin: 0 0 12px; }
+.badge {
+  display: inline-block;
+  background: #262a38;
+  border-radius: 16px;
+  padding: 6px 12px;
+  font-size: 13px;
+  margin-left: 6px;
+}
+.badge.ok { background: #1d3a26; color: #8ee6a1; }
+.badge.no { background: #3a1d1d; color: #ff9d9d; }
+main { max-width: 900px; margin: 24px auto; padding: 0 16px; display: grid; gap: 20px; }
+.card { background: #1a1d27; border-radius: 12px; padding: 20px; }
+form { display: flex; flex-direction: column; gap: 14px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+small { color: #9aa0b0; }
+code { background: #262a38; padding: 1px 5px; border-radius: 4px; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+input[type=file], select {
+  background: #0f1117; color: #e6e6e6;
+  border: 1px solid #333; border-radius: 8px; padding: 8px; font-size: 14px;
+}
+button {
+  background: #4f6ef7; color: #fff; border: none; border-radius: 8px;
+  padding: 12px; font-size: 15px; cursor: pointer;
+}
+button:disabled { opacity: .5; cursor: default; }
+.error { color: #ff7b7b; font-size: 14px; white-space: pre-wrap; }
+.job {
+  border: 1px solid #2a2e3d; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+}
+.job .top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+.job .status-running { color: #f7d54f; }
+.job .status-done { color: #8ee6a1; }
+.job .status-error { color: #ff7b7b; }
+.job details { margin-top: 8px; font-size: 13px; color: #9aa0b0; }
+.job pre { white-space: pre-wrap; margin: 6px 0 0; }
+.job a.dl {
+  display: inline-block; margin-top: 8px; background: #1d3a26; color: #8ee6a1;
+  padding: 8px 14px; border-radius: 8px; text-decoration: none;
+}
+#account pre {
+  background: #0f1117; border-radius: 8px; padding: 12px;
+  font-size: 12px; overflow-x: auto; white-space: pre-wrap;
+}
+#account h3 { font-size: 14px; margin: 14px 0 6px; }
