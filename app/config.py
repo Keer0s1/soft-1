@@ -23,6 +23,14 @@ PORT = int(os.getenv("PORT", "8000"))
 # Сколько картинок генерируем одновременно (лимит fast-gen — 5 на пользователя)
 IMAGE_CONCURRENCY = 5
 
+# Настройки рендера ffmpeg.
+# VIDEO_CODEC: libx264 (по умолчанию, на процессоре) или h264_nvenc (видеокарта NVIDIA,
+# в разы быстрее), h264_qsv (Intel), h264_amf (AMD).
+VIDEO_CODEC = os.getenv("VIDEO_CODEC", "libx264")
+# Для libx264: ultrafast/veryfast/fast/medium — чем быстрее, тем больше файл.
+VIDEO_PRESET = os.getenv("VIDEO_PRESET", "veryfast")
+VIDEO_FPS = int(os.getenv("VIDEO_FPS", "24"))
+
 ASPECT_SIZES = {
     "16:9": (1920, 1080),
     "9:16": (1080, 1920),

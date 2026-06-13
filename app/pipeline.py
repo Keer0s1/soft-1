@@ -180,24 +180,40 @@ def render_video(job: Job, audio_path: Path, image_paths: list[Path]) -> Path:
         for i, (d, s) in enumerate(zip(durations, job.scenes))
     ], ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # Картинки масштабируем заранее по одному разу — тогда при кодировании
+    # ffmpeg не пересчитывает scale/pad на каждом из тысяч кадров.
+    w, h = config.ASPECT_SIZES.get(job.aspect_ratio, (1920, 1080))
+    scaled_dir = job.dir / "images_scaled"
+    scaled_dir.mkdir(exist_ok=True)
+    scaled_paths = []
+    for path in image_paths:
+        sp = scaled_dir / path.name
+        _run(["ffmpeg", "-y", "-i", str(path),
+              "-vf", (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                      f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"),
+              str(sp)],
+             "ffmpeg не смог подготовить картинку")
+        scaled_paths.append(sp)
+
     concat = job.dir / "video_concat.txt"
     lines = []
-    for path, dur in zip(image_paths, durations):
+    for path, dur in zip(scaled_paths, durations):
         lines.append(f"file '{path.resolve()}'\n")
         lines.append(f"duration {dur:.3f}\n")
-    lines.append(f"file '{image_paths[-1].resolve()}'\n")  # требование concat demuxer
+    lines.append(f"file '{scaled_paths[-1].resolve()}'\n")  # требование concat demuxer
     concat.write_text("".join(lines), encoding="utf-8")
 
-    w, h = config.ASPECT_SIZES.get(job.aspect_ratio, (1920, 1080))
     out = job.dir / "video.mp4"
-    _run(["ffmpeg", "-y",
-          "-f", "concat", "-safe", "0", "-i", str(concat),
-          "-i", str(audio_path),
-          "-vf", (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                  f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p"),
-          "-r", "30", "-c:v", "libx264", "-preset", "medium",
-          "-c:a", "aac", "-b:a", "192k", "-shortest", str(out)],
-         "ffmpeg не смог собрать видео")
+    cmd = ["ffmpeg", "-y",
+           "-f", "concat", "-safe", "0", "-i", str(concat),
+           "-i", str(audio_path),
+           "-vf", "format=yuv420p",
+           "-r", str(config.VIDEO_FPS),
+           "-c:v", config.VIDEO_CODEC]
+    if config.VIDEO_CODEC == "libx264":
+        cmd += ["-preset", config.VIDEO_PRESET, "-tune", "stillimage"]
+    cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest", str(out)]
+    _run(cmd, "ffmpeg не смог собрать видео")
     return out
 
 
