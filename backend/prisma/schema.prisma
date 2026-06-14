@@ -1,0 +1,100 @@
+// Prisma schema — PostgreSQL.
+// Хранит проекты, их сцены (текст + промт картинки) и полную историю генераций,
+// чтобы всегда можно было вернуться и посмотреть, какой промт/голос/настройки
+// использовались, сколько это стоило и где лежит готовый файл.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Проект = один будущий ролик (сценарий + настройки).
+model Project {
+  id           String   @id @default(cuid())
+  title        String   @default("Без названия")
+  // Настройки генерации
+  provider     String   @default("flow") // flow | flower
+  model        String?  // для flow: GEM_PIX_2 | IMAGEN_3_5 | NARWHAL
+  aspectRatio  String   @default("16:9")
+  voiceTemplateId String? // UUID шаблона голоса в Voicer (необязательно)
+
+  scenes       Scene[]
+  jobs         Job[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// Сцена = кусок озвучиваемого текста + промт для картинки. Редактируемое состояние.
+model Scene {
+  id          String  @id @default(cuid())
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId   String
+  order       Int     // порядок в ролике, начиная с 0
+  voiceText   String  @db.Text
+  imagePrompt String  @db.Text
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId, order])
+}
+
+/// Job = один запуск сборки проекта (история генераций).
+model Job {
+  id          String  @id @default(cuid())
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId   String
+
+  status      String  @default("queued") // queued | running | done | error
+  step        String  @default("")
+  error       String  @db.Text @default("")
+  log         Json    @default("[]")
+
+  scenesCount Int     @default(0)
+  imagesDone  Int     @default(0)
+
+  // Озвучка (одним куском на весь сценарий)
+  voicerTaskId   String?
+  voiceCostChars Int?
+  audioPath      String?  // относительный путь в DATA_DIR
+
+  // Снимок настроек на момент запуска
+  provider    String  @default("flow")
+  model       String?
+  aspectRatio String  @default("16:9")
+
+  outputPath  String? // относительный путь к готовому mp4
+
+  results     SceneResult[]
+
+  createdAt   DateTime @default(now())
+  finishedAt  DateTime?
+
+  @@index([projectId, createdAt])
+}
+
+/// Снимок одной сцены в рамках конкретного запуска — для истории и аудита.
+model SceneResult {
+  id          String @id @default(cuid())
+  job         Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId       String
+
+  order       Int
+  voiceText   String @db.Text // что озвучивали
+  imagePrompt String @db.Text // какой промт картинки использовали
+
+  imagePath   String? // относительный путь к png
+  operationId String? // operation_id картинки в fast-gen
+  durationSec Float?  // сколько секунд эта картинка висит в ролике
+  status      String  @default("pending") // pending | done | error
+  error       String  @db.Text @default("")
+
+  createdAt   DateTime @default(now())
+
+  @@index([jobId, order])
+}

@@ -1,6 +1,19 @@
+# env / секреты
 .env
+**/.env
+
+# данные (озвучка, картинки, готовые ролики)
 data/
-__pycache__/
-*.pyc
-.venv/
-venv/
+backend/data/
+
+# node
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# prisma
+backend/prisma/*.db
+
+# логи
+*.log
