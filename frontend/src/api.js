@@ -31,4 +31,8 @@ export const api = {
   providers: () => req('GET', '/api/meta/providers'),
   voicerBalance: () => req('GET', '/api/meta/voicer/balance'),
   voicerTemplates: () => req('GET', '/api/meta/voicer/templates'),
+
+  // Статус / лимиты
+  usage: () => req('GET', '/api/meta/usage'),
+  status: () => req('GET', '/api/meta/status'),
 };

@@ -111,9 +111,16 @@ export default function EditorPage() {
         {providerInfo?.models?.length > 0 && (
           <label>
             Модель
-            <select value={project.model ?? providerInfo.models[0]} onChange={(e) => patchSetting({ model: e.target.value })}>
+            <select
+              value={project.model ?? providerInfo.models[0].code}
+              onChange={(e) => patchSetting({ model: e.target.value })}
+            >
               {providerInfo.models.map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m.code} value={m.code}>
+                  {m.label}
+                  {m.default ? ' ★' : ''}
+                  {m.experimental ? ' (beta)' : ''}
+                </option>
               ))}
             </select>
           </label>

@@ -32,6 +32,17 @@ export async function getBalance(): Promise<any> {
   return r.json();
 }
 
+/** Пинг Voicer с замером задержки (через /balance — самый дешёвый запрос). */
+export async function ping(): Promise<{ ok: boolean; latencyMs: number; status?: number }> {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`${env.VOICER_API_URL}/balance`, { headers: headers() });
+    return { ok: r.ok, latencyMs: Date.now() - t0, status: r.status };
+  } catch {
+    return { ok: false, latencyMs: Date.now() - t0 };
+  }
+}
+
 export async function getTemplates(): Promise<any> {
   ensureConfigured();
   const r = await fetch(`${env.VOICER_API_URL}/templates`, { headers: headers() });

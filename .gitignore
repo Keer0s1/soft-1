@@ -1,6 +1,10 @@
 # env / секреты
 .env
 **/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
 
 # данные (озвучка, картинки, готовые ролики)
 data/

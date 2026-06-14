@@ -72,6 +72,31 @@ export async function submitImage(prompt: string, opts: SubmitImageOpts = {}): P
   return String(data.operation_id);
 }
 
+async function getJson(path: string): Promise<any> {
+  ensureConfigured();
+  const r = await fetch(`${env.FASTGEN_API_URL}${path}`, { headers: headers() });
+  if (!r.ok) throw new FastGenError(`fast-gen ${path}: ${r.status}`);
+  return r.json();
+}
+
+/** Список моделей с человекочитаемыми именами (v5). */
+export const getModels = () => getJson('/api/v5/models');
+/** Провайдеры (display_name, media_types). */
+export const getProviders = () => getJson('/api/v5/providers');
+/** Лимиты и текущее использование за час. */
+export const getUsage = () => getJson('/api/v5/usage');
+
+/** Пинг здоровья сервиса с замером задержки. */
+export async function ping(): Promise<{ ok: boolean; latencyMs: number; status?: number }> {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`${env.FASTGEN_API_URL}/api/health?deep=true`, { headers: headers() });
+    return { ok: r.ok, latencyMs: Date.now() - t0, status: r.status };
+  } catch {
+    return { ok: false, latencyMs: Date.now() - t0 };
+  }
+}
+
 export async function getOperation(operationId: string): Promise<any> {
   ensureConfigured();
   const r = await fetch(`${env.FASTGEN_API_URL}/api/v4/operations/${operationId}`, {
