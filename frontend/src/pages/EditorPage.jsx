@@ -16,6 +16,8 @@ export default function EditorPage() {
   const [activeJob, setActiveJob] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState('');
+  const [templates, setTemplates] = useState(null); // null=загрузка, []=пусто
+  const [templatesError, setTemplatesError] = useState('');
 
   async function load() {
     const p = await api.getProject(id);
@@ -25,6 +27,13 @@ export default function EditorPage() {
   useEffect(() => {
     load();
     api.providers().then(setProviders).catch(() => {});
+    api
+      .voicerTemplates()
+      .then((list) => setTemplates(Array.isArray(list) ? list : []))
+      .catch((e) => {
+        setTemplates([]);
+        setTemplatesError(e.message);
+      });
   }, [id]);
 
   if (!project) return <p className="muted">Загрузка…</p>;
@@ -118,13 +127,29 @@ export default function EditorPage() {
           </select>
         </label>
         <label>
-          Шаблон голоса (UUID, необязательно)
-          <input
-            placeholder="из Voicer / Telegram-бота"
-            value={project.voiceTemplateId ?? ''}
-            onChange={(e) => setProject((p) => ({ ...p, voiceTemplateId: e.target.value }))}
-            onBlur={(e) => patchSetting({ voiceTemplateId: e.target.value || null })}
-          />
+          Голос (шаблон Voicer)
+          {templates === null ? (
+            <select disabled>
+              <option>загрузка…</option>
+            </select>
+          ) : (
+            <select
+              value={project.voiceTemplateId ?? ''}
+              onChange={(e) => patchSetting({ voiceTemplateId: e.target.value || null })}
+            >
+              <option value="">Голос по умолчанию</option>
+              {templates.map((t) => (
+                <option key={t.uuid} value={t.uuid}>
+                  {t.name || t.uuid.slice(0, 8)}
+                  {t.broken ? ' (повреждён)' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          {templates?.length === 0 && !templatesError && (
+            <span className="muted small">нет шаблонов — создай голос в Telegram-боте Voicer</span>
+          )}
+          {templatesError && <span className="muted small">шаблоны не загрузились: {templatesError}</span>}
         </label>
       </div>
 

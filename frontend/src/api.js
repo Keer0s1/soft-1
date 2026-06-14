@@ -30,4 +30,5 @@ export const api = {
   // Справочники
   providers: () => req('GET', '/api/meta/providers'),
   voicerBalance: () => req('GET', '/api/meta/voicer/balance'),
+  voicerTemplates: () => req('GET', '/api/meta/voicer/templates'),
 };
