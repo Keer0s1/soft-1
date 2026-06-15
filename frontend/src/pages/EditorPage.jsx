@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import JobProgress from '../components/JobProgress.jsx';
 import ImportDialog from '../components/ImportDialog.jsx';
 import SceneCard from '../components/SceneCard.jsx';
+import EffectsPanel from '../components/EffectsPanel.jsx';
 
 const IMG_FIELDS = ['imageStatus', 'imagePath', 'imageError', 'imageSource', 'imageUpdatedAt', 'activeImageId', 'images'];
 
@@ -13,6 +14,7 @@ export default function EditorPage() {
   const [scenes, setScenes] = useState([]);
   const [providers, setProviders] = useState({ providers: [], aspectRatios: [] });
   const [templates, setTemplates] = useState(null);
+  const [effects, setEffects] = useState(null);
   const [activeJob, setActiveJob] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState('');
@@ -28,6 +30,7 @@ export default function EditorPage() {
     load();
     api.providers().then(setProviders).catch(() => {});
     api.voicerTemplates().then((l) => setTemplates(Array.isArray(l) ? l : [])).catch(() => setTemplates([]));
+    api.effects().then(setEffects).catch(() => {});
   }, [id]);
 
   // Подмешать свежие статусы картинок (не трогая текст/промт)
@@ -198,6 +201,9 @@ export default function EditorPage() {
           )}
         </label>
       </div>
+
+      {/* Эффекты */}
+      <EffectsPanel project={project} effects={effects} onPatch={patchSetting} />
 
       {/* Сцены */}
       <div className="scenes-head">

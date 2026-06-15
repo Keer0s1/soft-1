@@ -23,6 +23,15 @@ model Project {
   aspectRatio  String   @default("16:9")
   voiceTemplateId String? // UUID шаблона голоса в Voicer (необязательно)
 
+  // Эффекты рендера
+  zoomEnabled        Boolean @default(true)
+  zoomIntensity      Float   @default(0.15) // сила движения (0.05–0.35)
+  zoomPresets        Json    @default("[\"in\",\"out\",\"left\",\"right\"]")
+  transitionEnabled  Boolean @default(true)
+  transitionDuration Float   @default(0.5)  // длительность перехода, сек
+  transitionPresets  Json    @default("[\"fade\",\"dissolve\",\"slideleft\",\"circleopen\"]")
+  renderQuality      String  @default("balance") // fast | balance | quality
+
   // Превью озвучки всего сценария (до сборки ролика)
   voicePreviewPath   String?
   voicePreviewStatus String  @default("none") // none | pending | done | error

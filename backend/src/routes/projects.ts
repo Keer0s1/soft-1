@@ -61,6 +61,17 @@ projectsRouter.patch('/:id', async (req, res) => {
   if (aspectRatio !== undefined) data.aspectRatio = String(aspectRatio);
   if (voiceTemplateId !== undefined)
     data.voiceTemplateId = voiceTemplateId === null ? null : String(voiceTemplateId);
+
+  // Настройки эффектов рендера
+  const b = req.body ?? {};
+  if (b.zoomEnabled !== undefined) data.zoomEnabled = !!b.zoomEnabled;
+  if (b.zoomIntensity !== undefined) data.zoomIntensity = Math.min(0.5, Math.max(0, Number(b.zoomIntensity)));
+  if (b.zoomPresets !== undefined && Array.isArray(b.zoomPresets)) data.zoomPresets = b.zoomPresets;
+  if (b.transitionEnabled !== undefined) data.transitionEnabled = !!b.transitionEnabled;
+  if (b.transitionDuration !== undefined) data.transitionDuration = Math.min(2, Math.max(0.1, Number(b.transitionDuration)));
+  if (b.transitionPresets !== undefined && Array.isArray(b.transitionPresets)) data.transitionPresets = b.transitionPresets;
+  if (b.renderQuality !== undefined) data.renderQuality = String(b.renderQuality);
+
   const project = await prisma.project.update({ where: { id: req.params.id }, data });
   res.json(project);
 });

@@ -4,10 +4,12 @@
 // сцен есть готовая картинка.
 
 import path from 'node:path';
+import os from 'node:os';
 import { prisma } from '../db.js';
-import { JOBS_DIR } from '../env.js';
+import { JOBS_DIR, env, ASPECT_SIZES } from '../env.js';
 import * as voicer from '../lib/voicer.js';
-import { audioDuration, saveAudio, renderVideo } from '../lib/ffmpeg.js';
+import { audioDuration, saveAudio, renderSceneClip, stitchClips, qualityOf } from '../lib/ffmpeg.js';
+import { buildZoomFilter, staticFilter, pickSequence, validZoomPresets, validTransitionPresets } from '../lib/effects.js';
 import { rel, abs, projectDir } from '../lib/paths.js';
 import fs from 'node:fs';
 
@@ -109,21 +111,70 @@ export async function runJob(jobId: string): Promise<void> {
     );
     await prisma.job.update({ where: { id: jobId }, data: { imagesDone: scenes.length } });
 
-    // 3) Сборка видео из готовых картинок сцен
-    await setStep(jobId, 'Сборка видео (ffmpeg)');
-    const rendered = await renderVideo({
-      jobDir,
-      aspectRatio: job.aspectRatio,
-      audioPath,
-      images: scenes.map((s, i) => ({ path: abs(s.imagePath!), durationSec: durations[i] })),
-    });
+    // 3) Сборка видео: каждая сцена -> отдельный клип (параллельно по ядрам),
+    //    затем сшивка (с переходами или встык).
+    const p = job.project;
+    const [w, h] = ASPECT_SIZES[job.aspectRatio] ?? [1920, 1080];
+    const fps = env.VIDEO_FPS;
+    const quality = qualityOf(p.renderQuality);
+    const zoomOn = p.zoomEnabled;
+    const intensity = p.zoomIntensity;
+    const zoomPresets = validZoomPresets(p.zoomPresets);
+    const transOn = p.transitionEnabled && scenes.length > 1;
+    const transPresets = validTransitionPresets(p.transitionPresets);
+    const tDur = transOn ? p.transitionDuration : 0;
+
+    // длительность клипа: при переходах добавляем нахлёст, чтобы тайминг не плыл
+    const clipLens = durations.map((d) => (transOn ? d + tDur : d));
+    const zSeq = pickSequence(zoomPresets, scenes.length);
+    const tSeq = transOn ? pickSequence(transPresets, scenes.length - 1) : null;
+
+    const clipsDir = path.join(jobDir, 'clips');
+    fs.mkdirSync(clipsDir, { recursive: true });
+    const clipPaths = scenes.map((_, i) => path.join(clipsDir, `clip_${String(i).padStart(3, '0')}.mp4`));
+
+    await setStep(jobId, `Рендер сцен (0/${scenes.length})`);
+    let renderedCount = 0;
+    let next = 0;
+    const cores = Math.max(1, Math.min(os.cpus().length, scenes.length));
+    const worker = async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= scenes.length) return;
+        const nFrames = Math.max(2, Math.round(clipLens[i] * fps));
+        const vf = zoomOn ? buildZoomFilter(zSeq[i], nFrames, intensity, w, h, fps) : staticFilter(w, h);
+        await renderSceneClip({
+          imagePath: abs(scenes[i].imagePath!),
+          outPath: clipPaths[i],
+          w, h, fps,
+          durationSec: clipLens[i],
+          vf,
+          zoom: zoomOn,
+          quality,
+        });
+        renderedCount += 1;
+        await setStep(jobId, `Рендер сцен (${renderedCount}/${scenes.length})`);
+      }
+    };
+    await Promise.all(Array.from({ length: cores }, worker));
+
+    await setStep(jobId, transOn ? 'Сшивка с переходами' : 'Сшивка ролика');
 
     // Кладём готовый ролик в папку проекта: projects/<имя>/output/<дата>.mp4
     const outDir = path.join(projectDir(job.project.id, job.project.folderName), 'output');
     fs.mkdirSync(outDir, { recursive: true });
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     const finalPath = path.join(outDir, `video-${stamp}.mp4`);
-    fs.copyFileSync(rendered, finalPath);
+    await stitchClips({
+      clips: clipPaths.map((cp, i) => ({ path: cp, durationSec: clipLens[i] })),
+      audioPath,
+      outPath: finalPath,
+      fps,
+      quality,
+      transitions: tSeq,
+      transitionDur: tDur,
+      workDir: jobDir,
+    });
 
     await prisma.job.update({
       where: { id: jobId },

@@ -4,10 +4,24 @@ import * as fastgen from '../lib/fastgen.js';
 import * as voicer from '../lib/voicer.js';
 import { ASPECT_SIZES } from '../env.js';
 import { cached } from '../lib/cache.js';
+import { ZOOM_PRESETS, TRANSITION_PRESETS } from '../lib/effects.js';
 
 export const metaRouter = Router();
 
 metaRouter.get('/health', (_req, res) => res.json({ ok: true }));
+
+// Пресеты эффектов для UI (id + название + ссылка на пример-видео)
+metaRouter.get('/effects', (_req, res) => {
+  res.json({
+    zoom: ZOOM_PRESETS.map((z) => ({ ...z, example: `/examples/zoom_${z.id}.mp4` })),
+    transitions: TRANSITION_PRESETS.map((t) => ({ ...t, example: `/examples/trans_${t.id}.mp4` })),
+    qualities: [
+      { id: 'fast', label: 'Быстро' },
+      { id: 'balance', label: 'Баланс' },
+      { id: 'quality', label: 'Качество' },
+    ],
+  });
+});
 
 // Запасные красивые названия моделей, если API недоступен (rate limit / сеть)
 const FALLBACK_MODEL_LABELS: Record<string, string> = {

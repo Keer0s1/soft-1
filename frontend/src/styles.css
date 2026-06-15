@@ -271,6 +271,23 @@ button.small { padding: 5px 9px; font-size: 12px; }
 .variant.active { border-color: var(--accent); }
 .variant-tag { position: absolute; right: 1px; bottom: 0; font-size: 9px; background: rgba(0,0,0,0.6); padding: 0 2px; border-radius: 3px; }
 
+/* панель эффектов */
+.fx-panel summary { cursor: pointer; font-weight: 600; font-size: 16px; }
+.fx-row { margin-top: 12px; }
+.fx-quality { max-width: 280px; }
+.fx-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+.fx-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.fx-toggle { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.fx-toggle input { width: auto; }
+.fx-slider { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); min-width: 200px; }
+.fx-slider input { width: 100%; }
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 10px; }
+.fx-tile { position: relative; padding: 0; border: 2px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; }
+.fx-tile video { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #000; }
+.fx-tile-label { font-size: 12px; padding: 5px 6px; color: var(--text); }
+.fx-tile.selected { border-color: var(--accent); }
+.fx-check { position: absolute; top: 4px; right: 6px; background: var(--accent-2); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+
 /* заметная кнопка скачать */
 .btn-download { background: var(--green); border-color: var(--green); color: #08210f; font-weight: 700; text-align: center; }
 .btn-download:hover { filter: brightness(1.08); }

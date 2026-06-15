@@ -54,4 +54,5 @@ export const api = {
   voicerTemplates: () => req('GET', '/api/meta/voicer/templates'),
   usage: () => req('GET', '/api/meta/usage'),
   status: () => req('GET', '/api/meta/status'),
+  effects: () => req('GET', '/api/meta/effects'),
 };
