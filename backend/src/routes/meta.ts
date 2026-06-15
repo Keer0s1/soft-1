@@ -119,8 +119,8 @@ metaRouter.get('/usage', async (_req, res) => {
 // Здоровье провайдеров: пинг fast-gen и Voicer с задержкой. Кеш 10с.
 function classify(p: { ok: boolean; latencyMs: number }): 'green' | 'yellow' | 'red' {
   if (!p.ok) return 'red';
-  if (p.latencyMs > 6000) return 'red';
-  if (p.latencyMs > 2000) return 'yellow';
+  if (p.latencyMs > 8000) return 'red';
+  if (p.latencyMs > 3000) return 'yellow';
   return 'green';
 }
 
