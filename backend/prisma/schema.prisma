@@ -22,6 +22,11 @@ model Project {
   aspectRatio  String   @default("16:9")
   voiceTemplateId String? // UUID шаблона голоса в Voicer (необязательно)
 
+  // Превью озвучки всего сценария (до сборки ролика)
+  voicePreviewPath   String?
+  voicePreviewStatus String  @default("none") // none | pending | done | error
+  voicePreviewError  String  @db.Text @default("")
+
   scenes       Scene[]
   jobs         Job[]
 
@@ -29,7 +34,9 @@ model Project {
   updatedAt    DateTime @updatedAt
 }
 
-/// Сцена = кусок озвучиваемого текста + промт для картинки. Редактируемое состояние.
+/// Сцена = кусок озвучиваемого текста + промт для картинки + сама картинка.
+/// Картинка живёт на сцене (а не в разовом запуске), чтобы её можно было
+/// просматривать и пере-генерировать поштучно ДО сборки ролика.
 model Scene {
   id          String  @id @default(cuid())
   project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -37,6 +44,15 @@ model Scene {
   order       Int     // порядок в ролике, начиная с 0
   voiceText   String  @db.Text
   imagePrompt String  @db.Text
+
+  // Картинка сцены
+  imagePath    String? // относительный путь в DATA_DIR
+  imageStatus  String  @default("none") // none | pending | done | error
+  imageError   String  @db.Text @default("")
+  imageOpId    String? // operation_id в fast-gen (для отладки)
+  imageSeed    Int?    // seed, с которым сгенерили (для воспроизводимости)
+  imageSource  String  @default("ai") // ai | upload
+  imageUpdatedAt DateTime?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

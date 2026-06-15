@@ -7,14 +7,16 @@ import { env } from './env.js';
 import { projectsRouter } from './routes/projects.js';
 import { jobsRouter } from './routes/jobs.js';
 import { metaRouter } from './routes/meta.js';
+import { scenesRouter } from './routes/scenes.js';
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '20mb' })); // запас под загрузку картинок (base64)
 
 // API
 app.use('/api/meta', metaRouter);
 app.use('/api/projects', projectsRouter);
+app.use('/api', scenesRouter);
 app.use('/api', jobsRouter);
 
 // Готовые файлы (озвучка, картинки, видео) из DATA_DIR

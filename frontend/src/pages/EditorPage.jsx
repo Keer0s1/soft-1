@@ -1,81 +1,131 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api.js';
 import JobProgress from '../components/JobProgress.jsx';
 import ImportDialog from '../components/ImportDialog.jsx';
+import SceneCard from '../components/SceneCard.jsx';
 
-const emptyScene = () => ({ voiceText: '', imagePrompt: '' });
+const IMG_FIELDS = ['imageStatus', 'imagePath', 'imageError', 'imageSource', 'imageUpdatedAt'];
 
 export default function EditorPage() {
   const { id } = useParams();
   const [project, setProject] = useState(null);
-  const [scenes, setScenes] = useState([emptyScene()]);
+  const [scenes, setScenes] = useState([]);
   const [providers, setProviders] = useState({ providers: [], aspectRatios: [] });
-  const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState(null);
+  const [templates, setTemplates] = useState(null);
   const [activeJob, setActiveJob] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState('');
-  const [templates, setTemplates] = useState(null); // null=загрузка, []=пусто
-  const [templatesError, setTemplatesError] = useState('');
+  const [block, setBlock] = useState({ canAssemble: false, blockReason: 'Загрузка…' });
+  const pollRef = useRef(null);
 
   async function load() {
     const p = await api.getProject(id);
     setProject(p);
-    setScenes(p.scenes.length ? p.scenes.map((s) => ({ voiceText: s.voiceText, imagePrompt: s.imagePrompt })) : [emptyScene()]);
+    setScenes(p.scenes);
   }
   useEffect(() => {
     load();
     api.providers().then(setProviders).catch(() => {});
-    api
-      .voicerTemplates()
-      .then((list) => setTemplates(Array.isArray(list) ? list : []))
-      .catch((e) => {
-        setTemplates([]);
-        setTemplatesError(e.message);
-      });
+    api.voicerTemplates().then((l) => setTemplates(Array.isArray(l) ? l : [])).catch(() => setTemplates([]));
   }, [id]);
+
+  // Подмешать свежие статусы картинок (не трогая текст/промт)
+  async function refreshStatus() {
+    try {
+      const { scenes: st, canAssemble, blockReason } = await api.scenesStatus(id);
+      const byId = Object.fromEntries(st.map((s) => [s.id, s]));
+      setScenes((arr) =>
+        arr.map((s) => {
+          const u = byId[s.id];
+          if (!u) return s;
+          const merged = { ...s };
+          for (const f of IMG_FIELDS) merged[f] = u[f];
+          return merged;
+        }),
+      );
+      setBlock({ canAssemble, blockReason });
+    } catch {
+      /* пропускаем тик */
+    }
+  }
+
+  // Поллим статусы, пока есть генерящиеся картинки
+  const anyPending = scenes.some((s) => s.imageStatus === 'pending');
+  useEffect(() => {
+    if (anyPending && !pollRef.current) {
+      pollRef.current = setInterval(refreshStatus, 2500);
+    } else if (!anyPending && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+      refreshStatus(); // финальное обновление (canAssemble и т.п.)
+    }
+    return () => {};
+  }, [anyPending]);
+  useEffect(() => () => clearInterval(pollRef.current), []);
+  // первичная загрузка статуса сборки
+  useEffect(() => {
+    if (scenes.length) refreshStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenes.length]);
+
+  // Превью озвучки — поллим проект, пока статус pending
+  useEffect(() => {
+    if (project?.voicePreviewStatus !== 'pending') return;
+    const t = setInterval(async () => {
+      const p = await api.getProject(id);
+      setProject((prev) => ({ ...prev, ...pickPreview(p) }));
+      if (p.voicePreviewStatus !== 'pending') clearInterval(t);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [project?.voicePreviewStatus, id]);
 
   if (!project) return <p className="muted">Загрузка…</p>;
 
-  const totalChars = scenes.reduce((n, s) => n + (s.voiceText?.length || 0), 0);
+  const providerInfo = providers.providers.find((p) => p.id === project.provider);
+  const counts = {
+    done: scenes.filter((s) => s.imageStatus === 'done').length,
+    pending: scenes.filter((s) => s.imageStatus === 'pending').length,
+    error: scenes.filter((s) => s.imageStatus === 'error').length,
+  };
 
   function patchSetting(patch) {
     setProject((p) => ({ ...p, ...patch }));
     api.updateProject(id, patch).catch((e) => setError(e.message));
   }
 
-  function updateScene(i, field, value) {
-    setScenes((arr) => arr.map((s, idx) => (idx === i ? { ...s, [field]: value } : s)));
+  async function addScene() {
+    const s = await api.addScene(id, {});
+    setScenes((arr) => [...arr, s]);
   }
-  const addScene = () => setScenes((arr) => [...arr, emptyScene()]);
-  const removeScene = (i) => setScenes((arr) => arr.filter((_, idx) => idx !== i));
-  function moveScene(i, dir) {
-    setScenes((arr) => {
-      const j = i + dir;
-      if (j < 0 || j >= arr.length) return arr;
-      const copy = [...arr];
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-      return copy;
-    });
+  async function removeScene(sceneId) {
+    await api.deleteScene(id, sceneId);
+    setScenes((arr) => arr.filter((s) => s.id !== sceneId));
   }
-
-  async function saveScenes() {
-    setSaving(true);
-    setError('');
-    try {
-      await api.saveScenes(id, scenes);
-      setSavedAt(new Date());
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+  async function moveScene(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= scenes.length) return;
+    const arr = [...scenes];
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    setScenes(arr);
+    await api.reorderScenes(id, arr.map((s) => s.id)).catch(() => {});
   }
 
-  async function generate() {
+  async function generateAll() {
     setError('');
-    await saveScenes();
+    await api.genMissingImages(id);
+    // оптимистично помечаем недостающие как pending, чтобы запустить поллинг
+    setScenes((arr) =>
+      arr.map((s) => (s.imageStatus === 'none' || s.imageStatus === 'error' ? { ...s, imageStatus: 'pending' } : s)),
+    );
+  }
+
+  function markPending(sceneId) {
+    setScenes((arr) => arr.map((s) => (s.id === sceneId ? { ...s, imageStatus: 'pending' } : s)));
+  }
+
+  async function assemble() {
+    setError('');
     try {
       const { jobId } = await api.startJob(id);
       setActiveJob(jobId);
@@ -84,7 +134,10 @@ export default function EditorPage() {
     }
   }
 
-  const providerInfo = providers.providers.find((p) => p.id === project.provider);
+  async function previewVoice() {
+    setProject((p) => ({ ...p, voicePreviewStatus: 'pending', voicePreviewError: '' }));
+    await api.voicePreview(id).catch((e) => setError(e.message));
+  }
 
   return (
     <div className="editor">
@@ -98,7 +151,7 @@ export default function EditorPage() {
         />
       </div>
 
-      {/* Настройки генерации */}
+      {/* Настройки */}
       <div className="panel settings">
         <label>
           Провайдер картинок
@@ -117,9 +170,7 @@ export default function EditorPage() {
             >
               {providerInfo.models.map((m) => (
                 <option key={m.code} value={m.code}>
-                  {m.label}
-                  {m.default ? ' ★' : ''}
-                  {m.experimental ? ' (beta)' : ''}
+                  {m.label}{m.default ? ' ★' : ''}{m.experimental ? ' (beta)' : ''}
                 </option>
               ))}
             </select>
@@ -136,87 +187,78 @@ export default function EditorPage() {
         <label>
           Голос (шаблон Voicer)
           {templates === null ? (
-            <select disabled>
-              <option>загрузка…</option>
-            </select>
+            <select disabled><option>загрузка…</option></select>
           ) : (
-            <select
-              value={project.voiceTemplateId ?? ''}
-              onChange={(e) => patchSetting({ voiceTemplateId: e.target.value || null })}
-            >
+            <select value={project.voiceTemplateId ?? ''} onChange={(e) => patchSetting({ voiceTemplateId: e.target.value || null })}>
               <option value="">Голос по умолчанию</option>
               {templates.map((t) => (
-                <option key={t.uuid} value={t.uuid}>
-                  {t.name || t.uuid.slice(0, 8)}
-                  {t.broken ? ' (повреждён)' : ''}
-                </option>
+                <option key={t.uuid} value={t.uuid}>{t.name || t.uuid.slice(0, 8)}</option>
               ))}
             </select>
           )}
-          {templates?.length === 0 && !templatesError && (
-            <span className="muted small">нет шаблонов — создай голос в Telegram-боте Voicer</span>
-          )}
-          {templatesError && <span className="muted small">шаблоны не загрузились: {templatesError}</span>}
         </label>
       </div>
 
       {/* Сцены */}
       <div className="scenes-head">
-        <h2>Сцены <span className="muted small">({scenes.length}, ~{totalChars} симв.)</span></h2>
-        <div>
-          <button className="ghost" onClick={() => setShowImport(true)}>📋 Импорт из текста</button>
-        </div>
+        <h2>Сцены <span className="muted small">({scenes.length})</span></h2>
+        <button className="ghost" onClick={() => setShowImport(true)}>📋 Импорт из текста</button>
       </div>
 
       <div className="scenes">
         {scenes.map((s, i) => (
-          <div className="scene" key={i}>
-            <div className="scene-num">
-              <span>{i + 1}</span>
-              <div className="scene-move">
-                <button className="icon-btn" onClick={() => moveScene(i, -1)} disabled={i === 0}>▲</button>
-                <button className="icon-btn" onClick={() => moveScene(i, 1)} disabled={i === scenes.length - 1}>▼</button>
-              </div>
-            </div>
-            <div className="scene-fields">
-              <label>
-                Текст озвучки
-                <textarea
-                  rows={3}
-                  value={s.voiceText}
-                  onChange={(e) => updateScene(i, 'voiceText', e.target.value)}
-                  placeholder="Что будет звучать в этой сцене…"
-                />
-              </label>
-              <label>
-                Промт картинки
-                <textarea
-                  rows={2}
-                  value={s.imagePrompt}
-                  onChange={(e) => updateScene(i, 'imagePrompt', e.target.value)}
-                  placeholder="Image prompt (лучше на английском)…"
-                />
-              </label>
-            </div>
-            <button className="icon-btn danger" title="Удалить сцену" onClick={() => removeScene(i)} disabled={scenes.length === 1}>✕</button>
-          </div>
+          <SceneCard
+            key={s.id}
+            projectId={id}
+            scene={s}
+            index={i}
+            total={scenes.length}
+            onMove={(dir) => moveScene(i, dir)}
+            onDelete={() => removeScene(s.id)}
+            onChanged={() => markPending(s.id)}
+          />
         ))}
       </div>
 
       <div className="scenes-actions">
         <button className="ghost" onClick={addScene}>+ Сцена</button>
         <div className="spacer" />
-        <button className="ghost" onClick={saveScenes} disabled={saving}>
-          {saving ? 'Сохранение…' : 'Сохранить'}
-        </button>
-        <button className="primary" onClick={generate} disabled={saving}>
-          ▶ Сгенерировать ролик
+        <button className="ghost" onClick={generateAll} disabled={!scenes.length || counts.pending > 0}>
+          🖼 Сгенерировать картинки
         </button>
       </div>
-      {savedAt && <div className="muted small right">сохранено {savedAt.toLocaleTimeString('ru-RU')}</div>}
+
+      {/* Сводка по картинкам + сборка */}
+      {scenes.length > 0 && (
+        <div className="panel assemble">
+          <div className="assemble-summary">
+            <span className="chip badge-done">🟢 готово {counts.done}/{scenes.length}</span>
+            {counts.pending > 0 && <span className="chip badge-pending">🟡 генерится {counts.pending}</span>}
+            {counts.error > 0 && <span className="chip badge-error">🔴 ошибок {counts.error}</span>}
+          </div>
+          <div className="assemble-actions">
+            <button className="ghost" onClick={previewVoice} disabled={project.voicePreviewStatus === 'pending'}>
+              {project.voicePreviewStatus === 'pending' ? '🎙 озвучиваю…' : '🎙 Прослушать озвучку'}
+            </button>
+            <button className="primary" onClick={assemble} disabled={!block.canAssemble}>
+              ▶ Собрать ролик
+            </button>
+          </div>
+          {!block.canAssemble && block.blockReason && (
+            <div className="muted small right">⚠️ {block.blockReason}</div>
+          )}
+          {project.voicePreviewStatus === 'done' && project.voicePreviewPath && (
+            <audio className="voice-preview" src={`/files/${project.voicePreviewPath}`} controls />
+          )}
+          {project.voicePreviewStatus === 'error' && (
+            <div className="error-box small">{project.voicePreviewError}</div>
+          )}
+        </div>
+      )}
+
       {error && <div className="error-box">{error}</div>}
 
-      {/* Активный запуск */}
+      {/* Активная сборка */}
       {activeJob && (
         <>
           <h2>Сборка</h2>
@@ -224,14 +266,12 @@ export default function EditorPage() {
         </>
       )}
 
-      {/* История запусков */}
+      {/* История */}
       {project.jobs?.length > 0 && (
         <>
           <h2>История</h2>
           <div className="history">
-            {project.jobs.map((j) => (
-              <HistoryRow key={j.id} job={j} />
-            ))}
+            {project.jobs.map((j) => <HistoryRow key={j.id} job={j} />)}
           </div>
         </>
       )}
@@ -240,14 +280,23 @@ export default function EditorPage() {
         <ImportDialog
           projectId={id}
           onClose={() => setShowImport(false)}
-          onImported={(imported) => {
-            setScenes(imported.length ? imported : [emptyScene()]);
+          onImported={async (imported) => {
+            await api.replaceScenes(id, imported);
             setShowImport(false);
+            await load();
           }}
         />
       )}
     </div>
   );
+}
+
+function pickPreview(p) {
+  return {
+    voicePreviewStatus: p.voicePreviewStatus,
+    voicePreviewPath: p.voicePreviewPath,
+    voicePreviewError: p.voicePreviewError,
+  };
 }
 
 function HistoryRow({ job }) {
@@ -260,9 +309,7 @@ function HistoryRow({ job }) {
         <span>{date}</span>
         <span className="muted small">{job.scenesCount} сцен</span>
         {job.outputPath && (
-          <a className="link" href={`/files/${job.outputPath}`} onClick={(e) => e.stopPropagation()}>
-            видео
-          </a>
+          <a className="link" href={`/files/${job.outputPath}`} onClick={(e) => e.stopPropagation()}>видео</a>
         )}
       </div>
       {open && <JobProgress jobId={job.id} />}

@@ -242,6 +242,39 @@ label > input, label > textarea, label > select { margin-top: 5px; color: var(--
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
 
+/* карточка сцены с превью */
+.scene-card {
+  display: grid; grid-template-columns: 40px 280px 1fr 34px; gap: 14px; align-items: start;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+}
+.scene-card-num { text-align: center; color: var(--muted); font-weight: 700; }
+.scene-card-fields { display: flex; flex-direction: column; gap: 10px; }
+
+.scene-image { display: flex; flex-direction: column; gap: 8px; }
+.thumb { position: relative; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-text { font-size: 30px; opacity: 0.5; }
+.thumb-pending { border-color: var(--accent); }
+.thumb-error { border-color: var(--red); }
+.thumb-badge { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 7px; border-radius: 20px; background: rgba(0,0,0,0.6); }
+.badge-done { color: var(--green); }
+.badge-pending { color: var(--accent); }
+.badge-error { color: var(--red); }
+.badge-none { color: var(--muted); }
+.scene-image-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+button.small { padding: 5px 9px; font-size: 12px; }
+
+/* панель сборки */
+.assemble { display: flex; flex-direction: column; gap: 10px; }
+.assemble-summary { display: flex; gap: 8px; flex-wrap: wrap; }
+.assemble-actions { display: flex; gap: 10px; align-items: center; }
+.assemble-actions .primary { margin-left: auto; }
+.voice-preview { width: 100%; margin-top: 4px; }
+
+@media (max-width: 760px) {
+  .scene-card { grid-template-columns: 32px 1fr 28px; }
+  .scene-image { grid-column: 1 / -1; }
+}
 @media (max-width: 640px) {
   .import-cols { grid-template-columns: 1fr; }
   .scene { grid-template-columns: 36px 1fr 30px; }

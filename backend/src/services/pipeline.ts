@@ -1,19 +1,15 @@
-// Оркестрация сборки ролика: сценарий -> озвучка (одним куском) + картинки -> MP4.
-// Тайминг: длительность каждой картинки пропорциональна числу символов её текста,
-// чтобы смена кадров попадала под слова. Прогресс и история пишутся в БД.
+// Сборка ролика (ФАЗА 2): берёт уже готовые картинки сцен + озвучивает текст
+// одним куском + склеивает в MP4. Картинки тут НЕ генерируются — они делаются
+// заранее, поштучно (services/images.ts). Сборка доступна только когда у всех
+// сцен есть готовая картинка.
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { prisma } from '../db.js';
-import { env, JOBS_DIR } from '../env.js';
+import { JOBS_DIR } from '../env.js';
 import * as voicer from '../lib/voicer.js';
-import * as fastgen from '../lib/fastgen.js';
 import { audioDuration, saveAudio, renderVideo } from '../lib/ffmpeg.js';
-
-/** Путь относительно DATA_DIR — его отдаёт статика по /files/... */
-function rel(absPath: string): string {
-  return path.relative(env.DATA_DIR, absPath).split(path.sep).join('/');
-}
+import { rel, abs } from '../lib/paths.js';
+import fs from 'node:fs';
 
 async function appendLog(jobId: string, msg: string) {
   const stamp = new Date().toLocaleTimeString('ru-RU', { hour12: false });
@@ -26,33 +22,25 @@ async function appendLog(jobId: string, msg: string) {
 const setStep = (jobId: string, step: string) =>
   prisma.job.update({ where: { id: jobId }, data: { step } });
 
-/** Запустить картинки с ограничением параллелизма (лимит fast-gen — 5). */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  async function runner() {
-    for (;;) {
-      const i = next++;
-      if (i >= items.length) return;
-      results[i] = await worker(items[i], i);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
-  return results;
+/** Можно ли собирать: у всех сцен картинка готова. Возвращает причину, если нельзя. */
+export async function assemblyBlockReason(projectId: string): Promise<string | null> {
+  const scenes = await prisma.scene.findMany({ where: { projectId }, select: { imageStatus: true } });
+  if (scenes.length === 0) return 'В проекте нет сцен';
+  const notDone = scenes.filter((s) => s.imageStatus !== 'done').length;
+  if (notDone > 0) return `Не у всех сцен готова картинка: осталось ${notDone} из ${scenes.length}`;
+  return null;
 }
 
-/** Создать Job для проекта (снимок текущих сцен и настроек) и вернуть его id. */
+/** Создать Job (снимок сцен и настроек). Гейт: все картинки должны быть готовы. */
 export async function createJob(projectId: string): Promise<string> {
+  const reason = await assemblyBlockReason(projectId);
+  if (reason) throw new Error(reason);
+
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     include: { scenes: { orderBy: { order: 'asc' } } },
   });
   if (!project) throw new Error('Проект не найден');
-  if (project.scenes.length === 0) throw new Error('В проекте нет сцен');
 
   const job = await prisma.job.create({
     data: {
@@ -67,6 +55,8 @@ export async function createJob(projectId: string): Promise<string> {
           order: s.order,
           voiceText: s.voiceText,
           imagePrompt: s.imagePrompt,
+          imagePath: s.imagePath, // снимок готовой картинки
+          status: 'done',
         })),
       },
     },
@@ -74,7 +64,7 @@ export async function createJob(projectId: string): Promise<string> {
   return job.id;
 }
 
-/** Полный прогон. Вызывать НЕ дожидаясь (фоном) — клиент опрашивает статус. */
+/** Полный прогон сборки. Вызывать НЕ дожидаясь (фоном) — клиент опрашивает статус. */
 export async function runJob(jobId: string): Promise<void> {
   const jobDir = path.join(JOBS_DIR, jobId);
   fs.mkdirSync(jobDir, { recursive: true });
@@ -82,27 +72,23 @@ export async function runJob(jobId: string): Promise<void> {
   try {
     const job = await prisma.job.findUnique({
       where: { id: jobId },
-      include: {
-        results: { orderBy: { order: 'asc' } },
-        project: true,
-      },
+      include: { results: { orderBy: { order: 'asc' } }, project: true },
     });
     if (!job) throw new Error('Job не найден');
 
     await prisma.job.update({ where: { id: jobId }, data: { status: 'running' } });
 
-    const scenes = job.results; // снимок сцен в порядке
+    const scenes = job.results;
+    if (scenes.some((s) => !s.imagePath)) throw new Error('У части сцен нет картинки — сборка невозможна');
+
     const fullText = scenes.map((s) => s.voiceText).join('\n\n');
 
-    // 1) Озвучка целиком (обходит минималку 500 символов на задачу)
+    // 1) Озвучка целиком
     await setStep(jobId, 'Озвучка: отправка задачи в Voicer');
     await appendLog(jobId, `Сцен: ${scenes.length}, символов текста: ${fullText.length}`);
-    const voice = job.project.voiceTemplateId
-      ? { template_uuid: job.project.voiceTemplateId }
-      : undefined;
+    const voice = job.project.voiceTemplateId ? { template_uuid: job.project.voiceTemplateId } : undefined;
     const taskId = await voicer.createTask(fullText, voice);
     await prisma.job.update({ where: { id: jobId }, data: { voicerTaskId: String(taskId) } });
-    await appendLog(jobId, `Voicer-задача создана: ${taskId}`);
 
     await setStep(jobId, 'Озвучка: ожидание синтеза');
     await voicer.waitUntilReady(taskId);
@@ -116,48 +102,20 @@ export async function runJob(jobId: string): Promise<void> {
     const charCounts = scenes.map((s) => Math.max(s.voiceText.length, 1));
     const totalChars = charCounts.reduce((a, b) => a + b, 0);
     const durations = charCounts.map((c) => (total * c) / totalChars);
+    await Promise.all(
+      scenes.map((s, i) =>
+        prisma.sceneResult.update({ where: { id: s.id }, data: { durationSec: durations[i] } }),
+      ),
+    );
+    await prisma.job.update({ where: { id: jobId }, data: { imagesDone: scenes.length } });
 
-    // 3) Генерация картинок (с ограничением параллелизма)
-    await setStep(jobId, `Генерация картинок (0/${scenes.length})`);
-    const imagesDir = path.join(jobDir, 'images');
-    fs.mkdirSync(imagesDir, { recursive: true });
-    let done = 0;
-
-    const imagePaths = await mapWithConcurrency(scenes, env.IMAGE_CONCURRENCY, async (scene, i) => {
-      try {
-        const opId = await fastgen.submitImage(scene.imagePrompt, {
-          provider: job.provider,
-          model: job.model,
-          aspectRatio: job.aspectRatio,
-        });
-        const bytes = await fastgen.waitForImage(opId);
-        const p = path.join(imagesDir, `scene_${String(i).padStart(3, '0')}.png`);
-        fs.writeFileSync(p, bytes);
-        await prisma.sceneResult.update({
-          where: { id: scene.id },
-          data: { imagePath: rel(p), operationId: opId, durationSec: durations[i], status: 'done' },
-        });
-        done += 1;
-        await setStep(jobId, `Генерация картинок (${done}/${scenes.length})`);
-        await prisma.job.update({ where: { id: jobId }, data: { imagesDone: done } });
-        await appendLog(jobId, `Картинка ${i + 1}/${scenes.length} готова`);
-        return p;
-      } catch (e: any) {
-        await prisma.sceneResult.update({
-          where: { id: scene.id },
-          data: { status: 'error', error: String(e?.message ?? e) },
-        });
-        throw e;
-      }
-    });
-
-    // 4) Сборка видео
+    // 3) Сборка видео из готовых картинок сцен
     await setStep(jobId, 'Сборка видео (ffmpeg)');
     const out = await renderVideo({
       jobDir,
       aspectRatio: job.aspectRatio,
       audioPath,
-      images: imagePaths.map((p, i) => ({ path: p, durationSec: durations[i] })),
+      images: scenes.map((s, i) => ({ path: abs(s.imagePath!), durationSec: durations[i] })),
     });
 
     await prisma.job.update({

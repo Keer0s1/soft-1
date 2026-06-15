@@ -19,20 +19,37 @@ export const api = {
   getProject: (id) => req('GET', `/api/projects/${id}`),
   updateProject: (id, patch) => req('PATCH', `/api/projects/${id}`, patch),
   deleteProject: (id) => req('DELETE', `/api/projects/${id}`),
-  saveScenes: (id, scenes) => req('PUT', `/api/projects/${id}/scenes`, { scenes }),
+
+  // Сцены (поштучно)
+  addScene: (id, scene) => req('POST', `/api/projects/${id}/scenes`, scene ?? {}),
+  updateScene: (id, sceneId, patch) => req('PATCH', `/api/projects/${id}/scenes/${sceneId}`, patch),
+  deleteScene: (id, sceneId) => req('DELETE', `/api/projects/${id}/scenes/${sceneId}`),
+  reorderScenes: (id, orderedIds) => req('POST', `/api/projects/${id}/scenes/reorder`, { orderedIds }),
+  scenesStatus: (id) => req('GET', `/api/projects/${id}/scenes/status`),
+
+  // Импорт целиком (заменяет все сцены)
+  replaceScenes: (id, scenes) => req('PUT', `/api/projects/${id}/scenes`, { scenes }),
   parseScript: (id, scriptText, promptsText) =>
     req('POST', `/api/projects/${id}/parse`, { scriptText, promptsText }),
 
-  // Запуски
+  // Картинки
+  genSceneImage: (id, sceneId, newSeed = false) =>
+    req('POST', `/api/projects/${id}/scenes/${sceneId}/image`, { newSeed }),
+  genMissingImages: (id) => req('POST', `/api/projects/${id}/images/generate-missing`),
+  uploadSceneImage: (id, sceneId, dataUri) =>
+    req('POST', `/api/projects/${id}/scenes/${sceneId}/upload`, { dataUri }),
+
+  // Озвучка-превью
+  voicePreview: (id) => req('POST', `/api/projects/${id}/voice-preview`),
+
+  // Запуски (сборка)
   startJob: (projectId) => req('POST', `/api/projects/${projectId}/jobs`),
   getJob: (jobId) => req('GET', `/api/jobs/${jobId}`),
 
-  // Справочники
+  // Справочники / статус
   providers: () => req('GET', '/api/meta/providers'),
   voicerBalance: () => req('GET', '/api/meta/voicer/balance'),
   voicerTemplates: () => req('GET', '/api/meta/voicer/templates'),
-
-  // Статус / лимиты
   usage: () => req('GET', '/api/meta/usage'),
   status: () => req('GET', '/api/meta/status'),
 };
