@@ -8,7 +8,7 @@ import { prisma } from '../db.js';
 import { JOBS_DIR } from '../env.js';
 import * as voicer from '../lib/voicer.js';
 import { audioDuration, saveAudio, renderVideo } from '../lib/ffmpeg.js';
-import { rel, abs } from '../lib/paths.js';
+import { rel, abs, projectDir } from '../lib/paths.js';
 import fs from 'node:fs';
 
 async function appendLog(jobId: string, msg: string) {
@@ -111,18 +111,25 @@ export async function runJob(jobId: string): Promise<void> {
 
     // 3) Сборка видео из готовых картинок сцен
     await setStep(jobId, 'Сборка видео (ffmpeg)');
-    const out = await renderVideo({
+    const rendered = await renderVideo({
       jobDir,
       aspectRatio: job.aspectRatio,
       audioPath,
       images: scenes.map((s, i) => ({ path: abs(s.imagePath!), durationSec: durations[i] })),
     });
 
+    // Кладём готовый ролик в папку проекта: projects/<имя>/output/<дата>.mp4
+    const outDir = path.join(projectDir(job.project.id, job.project.folderName), 'output');
+    fs.mkdirSync(outDir, { recursive: true });
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const finalPath = path.join(outDir, `video-${stamp}.mp4`);
+    fs.copyFileSync(rendered, finalPath);
+
     await prisma.job.update({
       where: { id: jobId },
-      data: { status: 'done', step: 'Готово', outputPath: rel(out), finishedAt: new Date() },
+      data: { status: 'done', step: 'Готово', outputPath: rel(finalPath), finishedAt: new Date() },
     });
-    await appendLog(jobId, `Видео собрано: ${path.basename(out)}`);
+    await appendLog(jobId, `Видео собрано: ${path.basename(finalPath)}`);
   } catch (e: any) {
     await prisma.job.update({
       where: { id: jobId },

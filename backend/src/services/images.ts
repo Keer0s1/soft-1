@@ -49,7 +49,7 @@ export async function generateSceneImage(
       });
       const bytes = await fastgen.waitForImage(opId);
 
-      const dir = path.join(projectDir(project.id), 'images');
+      const dir = path.join(projectDir(project.id, project.folderName), 'images');
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `scene_${sceneId}_${Date.now()}.png`);
       fs.writeFileSync(file, bytes);
@@ -110,7 +110,7 @@ export async function saveUploadedImage(sceneId: string, dataUri: string): Promi
   const ext = m[1].split('/')[1].replace('jpeg', 'jpg');
   const bytes = Buffer.from(m[2], 'base64');
 
-  const dir = path.join(projectDir(scene.project.id), 'images');
+  const dir = path.join(projectDir(scene.project.id, scene.project.folderName), 'images');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `scene_${sceneId}_${Date.now()}.${ext}`);
   fs.writeFileSync(file, bytes);

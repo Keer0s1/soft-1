@@ -27,7 +27,7 @@ export async function generateVoicePreview(projectId: string): Promise<void> {
     await voicer.waitUntilReady(taskId);
     const raw = await voicer.downloadResult(taskId);
 
-    const dir = path.join(projectDir(projectId), 'preview');
+    const dir = path.join(projectDir(projectId, project.folderName), 'preview');
     fs.mkdirSync(dir, { recursive: true });
     const audioPath = await saveAudio(raw, dir);
 

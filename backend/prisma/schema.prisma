@@ -16,6 +16,7 @@ datasource db {
 model Project {
   id           String   @id @default(cuid())
   title        String   @default("Без названия")
+  folderName   String   @default("") // человекочитаемая папка на диске (slug-id)
   // Настройки генерации
   provider     String   @default("flow") // flow | flower
   model        String?  // для flow: GEM_PIX_2 | IMAGEN_3_5 | NARWHAL

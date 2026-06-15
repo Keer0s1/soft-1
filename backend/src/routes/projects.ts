@@ -1,8 +1,15 @@
 import { Router } from 'express';
+import path from 'node:path';
 import { prisma } from '../db.js';
 import { parseScript } from '../lib/parse.js';
+import { makeFolderName } from '../lib/paths.js';
+import { env } from '../env.js';
 
 export const projectsRouter = Router();
+
+// Абсолютный путь к папке проекта на диске (чтобы показать в UI)
+const folderPathOf = (p: { id: string; folderName: string }) =>
+  path.join(env.DATA_DIR, 'projects', p.folderName || p.id);
 
 // Список проектов (с числом сцен и последним запуском)
 projectsRouter.get('/', async (_req, res) => {
@@ -16,11 +23,14 @@ projectsRouter.get('/', async (_req, res) => {
   res.json(projects);
 });
 
-// Создать проект
+// Создать проект (+ задать человекочитаемое имя папки на диске)
 projectsRouter.post('/', async (req, res) => {
   const { title } = req.body ?? {};
-  const project = await prisma.project.create({
-    data: { title: title?.trim() || 'Без названия' },
+  const clean = title?.trim() || 'Без названия';
+  const created = await prisma.project.create({ data: { title: clean } });
+  const project = await prisma.project.update({
+    where: { id: created.id },
+    data: { folderName: makeFolderName(clean, created.id) },
   });
   res.status(201).json(project);
 });
@@ -35,7 +45,7 @@ projectsRouter.get('/:id', async (req, res) => {
     },
   });
   if (!project) return res.status(404).json({ error: 'Проект не найден' });
-  res.json(project);
+  res.json({ ...project, folderPath: folderPathOf(project) });
 });
 
 // Обновить настройки проекта

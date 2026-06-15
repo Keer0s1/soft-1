@@ -253,6 +253,11 @@ export default function EditorPage() {
           {project.voicePreviewStatus === 'error' && (
             <div className="error-box small">{project.voicePreviewError}</div>
           )}
+          {project.folderPath && (
+            <div className="muted small folder-hint" title="Папка этого ролика на диске (картинки, озвучка, готовое видео)">
+              📁 Файлы на диске: <code>{project.folderPath}</code>
+            </div>
+          )}
         </div>
       )}
 
