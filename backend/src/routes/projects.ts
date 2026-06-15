@@ -40,7 +40,10 @@ projectsRouter.get('/:id', async (req, res) => {
   const project = await prisma.project.findUnique({
     where: { id: req.params.id },
     include: {
-      scenes: { orderBy: { order: 'asc' } },
+      scenes: {
+        orderBy: { order: 'asc' },
+        include: { images: { orderBy: { createdAt: 'desc' }, select: { id: true, path: true, source: true, createdAt: true } } },
+      },
       jobs: { orderBy: { createdAt: 'desc' } },
     },
   });

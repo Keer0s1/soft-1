@@ -58,8 +58,8 @@ export default function JobProgress({ jobId, onDone }) {
       {job.status === 'done' && job.outputPath && (
         <div className="result">
           <video src={`/files/${job.outputPath}`} controls style={{ width: '100%' }} />
-          <a className="btn" href={`/files/${job.outputPath}`} download>
-            ⬇ Скачать MP4
+          <a className="btn btn-download" href={`/files/${job.outputPath}`} download>
+            ⬇ Скачать видео (MP4)
           </a>
         </div>
       )}

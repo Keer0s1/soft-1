@@ -2,18 +2,22 @@ import { Router } from 'express';
 import fs from 'node:fs';
 import { prisma } from '../db.js';
 import { abs } from '../lib/paths.js';
-import { generateSceneImage, generateMissing, saveUploadedImage } from '../services/images.js';
+import { generateSceneImage, generateMissing, saveUploadedImage, setActiveImage } from '../services/images.js';
 import { generateVoicePreview } from '../services/voice.js';
 import { assemblyBlockReason } from '../services/pipeline.js';
 
 export const scenesRouter = Router();
 
-// Лёгкий эндпоинт для поллинга статусов картинок + можно ли собирать
+// Лёгкий эндпоинт для поллинга статусов картинок + варианты + можно ли собирать
 scenesRouter.get('/projects/:id/scenes/status', async (req, res) => {
   const scenes = await prisma.scene.findMany({
     where: { projectId: req.params.id },
     orderBy: { order: 'asc' },
-    select: { id: true, imageStatus: true, imagePath: true, imageError: true, imageSource: true, imageUpdatedAt: true },
+    select: {
+      id: true, imageStatus: true, imagePath: true, imageError: true, imageSource: true,
+      imageUpdatedAt: true, activeImageId: true,
+      images: { orderBy: { createdAt: 'desc' }, select: { id: true, path: true, source: true, createdAt: true } },
+    },
   });
   const blockReason = await assemblyBlockReason(req.params.id);
   res.json({ scenes, blockReason, canAssemble: blockReason === null });
@@ -63,18 +67,29 @@ scenesRouter.patch('/projects/:id/scenes/:sceneId', async (req, res) => {
   res.json(scene);
 });
 
-// Удалить сцену (и файл её картинки)
+// Удалить сцену (и файлы всех её вариантов картинок)
 scenesRouter.delete('/projects/:id/scenes/:sceneId', async (req, res) => {
-  const scene = await prisma.scene.findUnique({ where: { id: req.params.sceneId } });
-  if (scene?.imagePath) {
+  const variants = await prisma.sceneImage.findMany({ where: { sceneId: req.params.sceneId } });
+  for (const v of variants) {
     try {
-      fs.rmSync(abs(scene.imagePath), { force: true });
+      fs.rmSync(abs(v.path), { force: true });
     } catch {
       /* не критично */
     }
   }
   await prisma.scene.delete({ where: { id: req.params.sceneId } });
   res.status(204).end();
+});
+
+// Выбрать прошлый вариант картинки активным
+scenesRouter.post('/projects/:id/scenes/:sceneId/active', async (req, res) => {
+  try {
+    await setActiveImage(req.params.sceneId, String(req.body?.imageId ?? ''));
+    const scene = await prisma.scene.findUnique({ where: { id: req.params.sceneId } });
+    res.json(scene);
+  } catch (e: any) {
+    res.status(400).json({ error: String(e?.message ?? e) });
+  }
 });
 
 // (Пере)генерировать картинку одной сцены. body: { newSeed?: boolean }

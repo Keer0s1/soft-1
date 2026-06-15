@@ -38,6 +38,8 @@ export const api = {
   genMissingImages: (id) => req('POST', `/api/projects/${id}/images/generate-missing`),
   uploadSceneImage: (id, sceneId, dataUri) =>
     req('POST', `/api/projects/${id}/scenes/${sceneId}/upload`, { dataUri }),
+  setActiveImage: (id, sceneId, imageId) =>
+    req('POST', `/api/projects/${id}/scenes/${sceneId}/active`, { imageId }),
 
   // Озвучка-превью
   voicePreview: (id) => req('POST', `/api/projects/${id}/voice-preview`),

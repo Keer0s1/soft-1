@@ -9,7 +9,7 @@ const STATUS = {
 };
 
 // Одна сцена: превью картинки + статус + действия, плюс поля текста и промта.
-export default function SceneCard({ projectId, scene, index, total, onMove, onDelete, onChanged }) {
+export default function SceneCard({ projectId, scene, index, total, onMove, onDelete, onChanged, onRefresh }) {
   const [voiceText, setVoiceText] = useState(scene.voiceText);
   const [imagePrompt, setImagePrompt] = useState(scene.imagePrompt);
   const fileRef = useRef(null);
@@ -38,10 +38,17 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
     const reader = new FileReader();
     reader.onload = async (ev) => {
       await api.uploadSceneImage(projectId, scene.id, ev.target.result);
-      onChanged?.();
+      onRefresh?.();
     };
     reader.readAsDataURL(file);
   }
+
+  async function pickVariant(imageId) {
+    await api.setActiveImage(projectId, scene.id, imageId);
+    onRefresh?.();
+  }
+
+  const variants = scene.images ?? [];
 
   return (
     <div className="scene-card">
@@ -77,6 +84,23 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
         </div>
         {scene.imageStatus === 'error' && scene.imageError && (
           <div className="error-box small">{scene.imageError}</div>
+        )}
+
+        {/* Лента вариантов — клик ставит вариант активным (откат к прошлому фото) */}
+        {variants.length > 1 && (
+          <div className="variants" title="Прошлые варианты — кликни, чтобы вернуть">
+            {variants.map((v) => (
+              <button
+                key={v.id}
+                className={`variant${v.id === scene.activeImageId ? ' active' : ''}`}
+                onClick={() => pickVariant(v.id)}
+                title={v.source === 'upload' ? 'Загруженное фото' : 'Сгенерировано'}
+              >
+                <img src={`/files/${v.path}`} alt="вариант" />
+                {v.source === 'upload' && <span className="variant-tag">⬆</span>}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 

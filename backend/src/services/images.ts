@@ -1,25 +1,33 @@
 // Генерация картинок ПОШТУЧНО на уровне сцены, с авто-ретраем.
-// Функции не бросают исключений наружу — статус/ошибка пишутся в сцену,
-// чтобы их можно было вызывать «в фоне» и в пуле без обёрток.
+// Каждый успешный результат сохраняется как ВАРИАНТ (SceneImage), активный
+// вариант запоминается в Scene.activeImageId — можно вернуться к любому прошлому.
+// Функции не бросают исключений наружу — статус/ошибка пишутся в сцену.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { prisma } from '../db.js';
 import { env } from '../env.js';
 import * as fastgen from '../lib/fastgen.js';
-import { rel, abs, projectDir } from '../lib/paths.js';
+import { rel, projectDir } from '../lib/paths.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ATTEMPTS = 3; // авто-ретрай: их API часто отдаёт ошибки
 
-function removeFileQuiet(relPath?: string | null) {
-  if (!relPath) return;
-  try {
-    const p = abs(relPath);
-    if (fs.existsSync(p)) fs.rmSync(p, { force: true });
-  } catch {
-    /* не критично */
-  }
+/** Сделать вариант активным: проставить путь/статус на сцене. */
+async function setActive(sceneId: string, img: { id: string; path: string; source: string; seed: number | null; opId: string | null }) {
+  await prisma.scene.update({
+    where: { id: sceneId },
+    data: {
+      imagePath: img.path,
+      imageStatus: 'done',
+      imageError: '',
+      imageOpId: img.opId,
+      imageSeed: img.seed,
+      imageSource: img.source,
+      imageUpdatedAt: new Date(),
+      activeImageId: img.id,
+    },
+  });
 }
 
 /** Сгенерировать (или пере-генерировать) картинку одной сцены. */
@@ -33,7 +41,6 @@ export async function generateSceneImage(
 
   await prisma.scene.update({ where: { id: sceneId }, data: { imageStatus: 'pending', imageError: '' } });
 
-  // seed: «другой вариант» -> новый случайный; иначе повторяем прежний (если был)
   const seed = opts.newSeed
     ? Math.floor(Math.random() * 2_000_000_000)
     : scene.imageSeed ?? undefined;
@@ -53,20 +60,11 @@ export async function generateSceneImage(
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `scene_${sceneId}_${Date.now()}.png`);
       fs.writeFileSync(file, bytes);
-      removeFileQuiet(scene.imagePath); // убрать прежнюю картинку
 
-      await prisma.scene.update({
-        where: { id: sceneId },
-        data: {
-          imagePath: rel(file),
-          imageStatus: 'done',
-          imageError: '',
-          imageOpId: opId,
-          imageSeed: seed ?? null,
-          imageSource: 'ai',
-          imageUpdatedAt: new Date(),
-        },
+      const variant = await prisma.sceneImage.create({
+        data: { sceneId, path: rel(file), source: 'ai', seed: seed ?? null, prompt: scene.imagePrompt, opId },
       });
+      await setActive(sceneId, variant);
       return;
     } catch (e) {
       lastErr = e;
@@ -100,7 +98,7 @@ export async function generateMissing(projectId: string): Promise<void> {
   await Promise.all(Array.from({ length: limit }, runner));
 }
 
-/** Сохранить загруженную пользователем картинку (data-URI) как картинку сцены. */
+/** Сохранить загруженную пользователем картинку (data-URI) как вариант сцены. */
 export async function saveUploadedImage(sceneId: string, dataUri: string): Promise<void> {
   const scene = await prisma.scene.findUnique({ where: { id: sceneId }, include: { project: true } });
   if (!scene) throw new Error('Сцена не найдена');
@@ -114,17 +112,16 @@ export async function saveUploadedImage(sceneId: string, dataUri: string): Promi
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `scene_${sceneId}_${Date.now()}.${ext}`);
   fs.writeFileSync(file, bytes);
-  removeFileQuiet(scene.imagePath);
 
-  await prisma.scene.update({
-    where: { id: sceneId },
-    data: {
-      imagePath: rel(file),
-      imageStatus: 'done',
-      imageError: '',
-      imageOpId: null,
-      imageSource: 'upload',
-      imageUpdatedAt: new Date(),
-    },
+  const variant = await prisma.sceneImage.create({
+    data: { sceneId, path: rel(file), source: 'upload', prompt: scene.imagePrompt },
   });
+  await setActive(sceneId, { ...variant, opId: null });
+}
+
+/** Выбрать прошлый вариант картинки активным. */
+export async function setActiveImage(sceneId: string, imageId: string): Promise<void> {
+  const img = await prisma.sceneImage.findUnique({ where: { id: imageId } });
+  if (!img || img.sceneId !== sceneId) throw new Error('Вариант картинки не найден');
+  await setActive(sceneId, img);
 }

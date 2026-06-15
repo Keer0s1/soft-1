@@ -47,18 +47,37 @@ model Scene {
   imagePrompt String  @db.Text
 
   // Картинка сцены
-  imagePath    String? // относительный путь в DATA_DIR
+  imagePath    String? // относительный путь активной картинки в DATA_DIR
   imageStatus  String  @default("none") // none | pending | done | error
   imageError   String  @db.Text @default("")
   imageOpId    String? // operation_id в fast-gen (для отладки)
   imageSeed    Int?    // seed, с которым сгенерили (для воспроизводимости)
   imageSource  String  @default("ai") // ai | upload
   imageUpdatedAt DateTime?
+  activeImageId String? // id выбранного варианта из SceneImage
+
+  images      SceneImage[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([projectId, order])
+}
+
+/// Вариант картинки сцены — храним все генерации/загрузки, чтобы можно было
+/// вернуться к любому прошлому фото.
+model SceneImage {
+  id        String  @id @default(cuid())
+  scene     Scene   @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  sceneId   String
+  path      String  // относительный путь в DATA_DIR
+  source    String  @default("ai") // ai | upload
+  seed      Int?
+  prompt    String  @db.Text @default("")
+  opId      String?
+  createdAt DateTime @default(now())
+
+  @@index([sceneId, createdAt])
 }
 
 /// Job = один запуск сборки проекта (история генераций).

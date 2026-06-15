@@ -5,7 +5,7 @@ import JobProgress from '../components/JobProgress.jsx';
 import ImportDialog from '../components/ImportDialog.jsx';
 import SceneCard from '../components/SceneCard.jsx';
 
-const IMG_FIELDS = ['imageStatus', 'imagePath', 'imageError', 'imageSource', 'imageUpdatedAt'];
+const IMG_FIELDS = ['imageStatus', 'imagePath', 'imageError', 'imageSource', 'imageUpdatedAt', 'activeImageId', 'images'];
 
 export default function EditorPage() {
   const { id } = useParams();
@@ -216,6 +216,7 @@ export default function EditorPage() {
             onMove={(dir) => moveScene(i, dir)}
             onDelete={() => removeScene(s.id)}
             onChanged={() => markPending(s.id)}
+            onRefresh={refreshStatus}
           />
         ))}
       </div>
@@ -314,7 +315,9 @@ function HistoryRow({ job }) {
         <span>{date}</span>
         <span className="muted small">{job.scenesCount} сцен</span>
         {job.outputPath && (
-          <a className="link" href={`/files/${job.outputPath}`} onClick={(e) => e.stopPropagation()}>видео</a>
+          <a className="btn btn-download small" href={`/files/${job.outputPath}`} download onClick={(e) => e.stopPropagation()}>
+            ⬇ скачать
+          </a>
         )}
       </div>
       {open && <JobProgress jobId={job.id} />}
