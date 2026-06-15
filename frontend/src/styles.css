@@ -276,17 +276,60 @@ button.small { padding: 5px 9px; font-size: 12px; }
 .fx-row { margin-top: 12px; }
 .fx-quality { max-width: 280px; }
 .fx-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+.fx-section.off { opacity: 0.55; }
 .fx-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.fx-toggle { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.fx-toggle { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
 .fx-toggle input { width: auto; }
 .fx-slider { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); min-width: 200px; }
 .fx-slider input { width: 100%; }
 .fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 10px; }
-.fx-tile { position: relative; padding: 0; border: 2px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; }
-.fx-tile video { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #000; }
-.fx-tile-label { font-size: 12px; padding: 5px 6px; color: var(--text); }
+.fx-tile { position: relative; padding: 0; border: 2px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; cursor: pointer; }
 .fx-tile.selected { border-color: var(--accent); }
-.fx-check { position: absolute; top: 4px; right: 6px; background: var(--accent-2); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.fx-tile-label { font-size: 12px; padding: 5px 6px; color: var(--text); }
+.fx-check { position: absolute; top: 4px; right: 6px; background: var(--accent-2); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 12px; display: flex; align-items: center; justify-content: center; z-index: 3; }
+
+/* кадр превью — анимация только при наведении */
+.fx-frame { position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden; background: #000; }
+.fx-img { position: absolute; inset: 0; background-size: cover; background-position: center; will-change: transform, opacity; }
+.fx-imgB { opacity: 0; }
+
+/* зум: бежит только на :hover, сила берётся из --kb-scale, дёргается туда-сюда */
+.fx-tile:hover .kb-in { animation: kb-in 2.6s ease-in-out infinite alternate; }
+.fx-tile:hover .kb-out { animation: kb-out 2.6s ease-in-out infinite alternate; }
+.fx-tile:hover .kb-left { animation: kb-left 2.6s ease-in-out infinite alternate; }
+.fx-tile:hover .kb-right { animation: kb-right 2.6s ease-in-out infinite alternate; }
+.fx-tile:hover .kb-up { animation: kb-up 2.6s ease-in-out infinite alternate; }
+.fx-tile:hover .kb-down { animation: kb-down 2.6s ease-in-out infinite alternate; }
+.fx-tile:hover .kb-inUp { animation: kb-inUp 2.6s ease-in-out infinite alternate; }
+.fx-tile:hover .kb-inDown { animation: kb-inDown 2.6s ease-in-out infinite alternate; }
+
+@keyframes kb-in { from { transform: scale(1); } to { transform: scale(var(--kb-scale)); } }
+@keyframes kb-out { from { transform: scale(var(--kb-scale)); } to { transform: scale(1); } }
+@keyframes kb-right { from { transform: scale(var(--kb-scale)) translateX(calc((var(--kb-scale) - 1) * 60%)); } to { transform: scale(var(--kb-scale)) translateX(calc((var(--kb-scale) - 1) * -60%)); } }
+@keyframes kb-left { from { transform: scale(var(--kb-scale)) translateX(calc((var(--kb-scale) - 1) * -60%)); } to { transform: scale(var(--kb-scale)) translateX(calc((var(--kb-scale) - 1) * 60%)); } }
+@keyframes kb-down { from { transform: scale(var(--kb-scale)) translateY(calc((var(--kb-scale) - 1) * 60%)); } to { transform: scale(var(--kb-scale)) translateY(calc((var(--kb-scale) - 1) * -60%)); } }
+@keyframes kb-up { from { transform: scale(var(--kb-scale)) translateY(calc((var(--kb-scale) - 1) * -60%)); } to { transform: scale(var(--kb-scale)) translateY(calc((var(--kb-scale) - 1) * 60%)); } }
+@keyframes kb-inUp { from { transform: scale(1) translateY(0); } to { transform: scale(var(--kb-scale)) translateY(calc((var(--kb-scale) - 1) * -50%)); } }
+@keyframes kb-inDown { from { transform: scale(1) translateY(0); } to { transform: scale(var(--kb-scale)) translateY(calc((var(--kb-scale) - 1) * 50%)); } }
+
+/* переходы: только на :hover, длительность из --tr-dur, цикл A<->B */
+.fx-tile:hover .tr-fade, .fx-tile:hover .tr-dissolve, .fx-tile:hover .tr-fadeblack { animation: tr-fade var(--tr-dur) ease-in-out infinite alternate; }
+.fx-tile:hover .tr-wipeleft { animation: tr-wipeleft var(--tr-dur) ease-in-out infinite alternate; }
+.fx-tile:hover .tr-wiperight { animation: tr-wiperight var(--tr-dur) ease-in-out infinite alternate; }
+.fx-tile:hover .tr-slideleft { animation: tr-slideleft var(--tr-dur) ease-in-out infinite alternate; }
+.fx-tile:hover .tr-slideup { animation: tr-slideup var(--tr-dur) ease-in-out infinite alternate; }
+.fx-tile:hover .tr-circleopen, .fx-tile:hover .tr-radial { animation: tr-circle var(--tr-dur) ease-in-out infinite alternate; }
+.fx-tile:hover .tr-pixelize { animation: tr-pixelize var(--tr-dur) steps(6) infinite alternate; }
+
+@keyframes tr-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tr-wipeleft { from { opacity: 1; clip-path: inset(0 0 0 100%); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
+@keyframes tr-wiperight { from { opacity: 1; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
+@keyframes tr-slideleft { from { opacity: 1; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes tr-slideup { from { opacity: 1; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }
+@keyframes tr-circle { from { opacity: 1; clip-path: circle(0% at 50% 50%); } to { opacity: 1; clip-path: circle(75% at 50% 50%); } }
+@keyframes tr-pixelize { from { opacity: 0; filter: blur(10px); } to { opacity: 1; filter: blur(0); } }
+
+/* заметная кнопка скачать */
 
 /* заметная кнопка скачать */
 .btn-download { background: var(--green); border-color: var(--green); color: #08210f; font-weight: 700; text-align: center; }

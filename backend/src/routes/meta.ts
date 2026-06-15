@@ -13,8 +13,8 @@ metaRouter.get('/health', (_req, res) => res.json({ ok: true }));
 // Пресеты эффектов для UI (id + название + ссылка на пример-видео)
 metaRouter.get('/effects', (_req, res) => {
   res.json({
-    zoom: ZOOM_PRESETS.map((z) => ({ ...z, example: `/examples/zoom_${z.id}.mp4` })),
-    transitions: TRANSITION_PRESETS.map((t) => ({ ...t, example: `/examples/trans_${t.id}.mp4` })),
+    zoom: ZOOM_PRESETS,
+    transitions: TRANSITION_PRESETS,
     qualities: [
       { id: 'fast', label: 'Быстро' },
       { id: 'balance', label: 'Баланс' },

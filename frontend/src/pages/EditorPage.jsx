@@ -86,6 +86,7 @@ export default function EditorPage() {
   if (!project) return <p className="muted">Загрузка…</p>;
 
   const providerInfo = providers.providers.find((p) => p.id === project.provider);
+  const withImg = scenes.filter((s) => s.imagePath); // для превью эффектов на реальных картинках
   const counts = {
     done: scenes.filter((s) => s.imageStatus === 'done').length,
     pending: scenes.filter((s) => s.imageStatus === 'pending').length,
@@ -203,7 +204,13 @@ export default function EditorPage() {
       </div>
 
       {/* Эффекты */}
-      <EffectsPanel project={project} effects={effects} onPatch={patchSetting} />
+      <EffectsPanel
+        project={project}
+        effects={effects}
+        onPatch={patchSetting}
+        sampleA={withImg[0] ? `/files/${withImg[0].imagePath}` : undefined}
+        sampleB={withImg[1] ? `/files/${withImg[1].imagePath}` : undefined}
+      />
 
       {/* Сцены */}
       <div className="scenes-head">
