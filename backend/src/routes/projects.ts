@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import path from 'node:path';
 import { prisma } from '../db.js';
-import { parseScript } from '../lib/parse.js';
+import { parseTwoFiles } from '../lib/parse.js';
 import { makeFolderName } from '../lib/paths.js';
 import { env } from '../env.js';
 
@@ -105,11 +105,11 @@ projectsRouter.put('/:id/scenes', async (req, res) => {
   res.json(updated);
 });
 
-// Разобрать вставленный текст сценария в сцены (без сохранения)
+// Разобрать два файла (речь + промты) в сцены по строкам (без сохранения)
 projectsRouter.post('/:id/parse', async (req, res) => {
-  const { scriptText, promptsText } = req.body ?? {};
+  const { speechText, promptsText } = req.body ?? {};
   try {
-    const scenes = parseScript(String(scriptText ?? ''), promptsText ? String(promptsText) : undefined);
+    const scenes = parseTwoFiles(String(speechText ?? ''), String(promptsText ?? ''));
     res.json({ scenes });
   } catch (e: any) {
     res.status(400).json({ error: String(e?.message ?? e) });

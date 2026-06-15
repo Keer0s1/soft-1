@@ -1,5 +1,7 @@
-// Разбор сценария на сцены (текст озвучки + промт картинки).
-// Используется, когда сцены вставляют одним текстом, а не строят в редакторе вручную.
+// Разбор сценария на сцены: матчинг ДВУХ файлов построчно.
+// Речь: каждая непустая строка = сцена. Промты: каждая непустая строка = промт.
+// Пустые строки игнорируются (можно разделять и пустой строкой, и подряд).
+// Сцена N = строка N речи + строка N промта.
 
 export interface ParsedScene {
   voiceText: string;
@@ -8,54 +10,28 @@ export interface ParsedScene {
 
 export class ParseError extends Error {}
 
+const nonEmptyLines = (text: string): string[] =>
+  text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
 /**
- * Вариант 1 — один файл с маркерами: после куска текста строка `IMG: промт`
- *   (также ИЗО:/КАРТИНКА:).
- * Вариант 2 — два текста: сценарий разбит пустыми строками на абзацы,
- *   промты — по одному на строку (абзац N -> промт N).
+ * Матчинг двух файлов по строкам.
+ * @param speechText файл речи (строка = сцена)
+ * @param promptsText файл промтов (строка = промт)
  */
-export function parseScript(scriptText: string, promptsText?: string): ParsedScene[] {
-  if (promptsText && promptsText.trim()) {
-    const paragraphs = scriptText
-      .split(/\n\s*\n/)
-      .map((p) => p.trim())
-      .filter(Boolean);
-    const prompts = promptsText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    if (paragraphs.length !== prompts.length) {
-      throw new ParseError(
-        `Число абзацев сценария (${paragraphs.length}) не совпадает с числом промтов ` +
-          `(${prompts.length}). Абзацы разделяются пустой строкой, промты — по одному на строку.`,
-      );
-    }
-    return paragraphs.map((p, i) => ({ voiceText: p, imagePrompt: prompts[i] }));
+export function parseTwoFiles(speechText: string, promptsText: string): ParsedScene[] {
+  const speeches = nonEmptyLines(speechText);
+  const prompts = nonEmptyLines(promptsText);
+
+  if (speeches.length === 0) throw new ParseError('Файл речи пустой.');
+  if (prompts.length === 0) throw new ParseError('Файл промтов пустой.');
+
+  if (speeches.length !== prompts.length) {
+    const diverge = Math.min(speeches.length, prompts.length) + 1;
+    throw new ParseError(
+      `Не совпадает количество: строк речи ${speeches.length}, промтов ${prompts.length}. ` +
+        `Разъехалось примерно на строке ${diverge}. Проверь, что у каждой сцены есть свой промт.`,
+    );
   }
 
-  const scenes: ParsedScene[] = [];
-  let buf: string[] = [];
-  const markerRe = /^\s*(?:IMG|ИЗО|КАРТИНКА)\s*:\s*(.+)$/i;
-  for (const line of scriptText.split(/\r?\n/)) {
-    const m = markerRe.exec(line);
-    if (m) {
-      const text = buf.join('\n').trim();
-      if (!text) throw new ParseError('Найден промт IMG: без текста сцены перед ним.');
-      scenes.push({ voiceText: text, imagePrompt: m[1].trim() });
-      buf = [];
-    } else {
-      buf.push(line);
-    }
-  }
-  const leftover = buf.join('\n').trim();
-  if (leftover) {
-    if (scenes.length) scenes[scenes.length - 1].voiceText += '\n' + leftover;
-    else
-      throw new ParseError(
-        'В сценарии нет промтов картинок. Добавь после каждого куска текста строку `IMG: промт`, ' +
-          'либо передай отдельный список промтов (по одному на строку).',
-      );
-  }
-  if (!scenes.length) throw new ParseError('Сценарий пустой.');
-  return scenes;
+  return speeches.map((voiceText, i) => ({ voiceText, imagePrompt: prompts[i] }));
 }

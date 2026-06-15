@@ -29,8 +29,8 @@ export const api = {
 
   // Импорт целиком (заменяет все сцены)
   replaceScenes: (id, scenes) => req('PUT', `/api/projects/${id}/scenes`, { scenes }),
-  parseScript: (id, scriptText, promptsText) =>
-    req('POST', `/api/projects/${id}/parse`, { scriptText, promptsText }),
+  parseFiles: (id, speechText, promptsText) =>
+    req('POST', `/api/projects/${id}/parse`, { speechText, promptsText }),
 
   // Картинки
   genSceneImage: (id, sceneId, newSeed = false) =>
