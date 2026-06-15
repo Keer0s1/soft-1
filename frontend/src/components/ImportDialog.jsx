@@ -45,7 +45,13 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
   const pLines = lines(promptsText);
   const countMismatch = sLines.length > 0 && pLines.length > 0 && sLines.length !== pLines.length;
   const ready = sLines.length > 0 && pLines.length > 0 && !countMismatch;
-  const previewPairs = sLines.slice(0, 5).map((s, i) => ({ s, p: pLines[i] ?? '—' }));
+  // все пары — где одной стороны нет, помечаем как ошибку
+  const maxLen = Math.max(sLines.length, pLines.length);
+  const pairs = Array.from({ length: maxLen }, (_, i) => ({
+    s: sLines[i],
+    p: pLines[i],
+    bad: sLines[i] === undefined || pLines[i] === undefined,
+  }));
 
   async function doImport() {
     setError('');
@@ -94,16 +100,15 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
             {ready && ' — совпадает ✓'}
           </div>
         )}
-        {ready && (
+        {maxLen > 0 && (
           <div className="import-preview">
-            {previewPairs.map((p, i) => (
-              <div key={i} className="import-pair">
+            {pairs.map((p, i) => (
+              <div key={i} className={`import-pair${p.bad ? ' bad' : ''}`}>
                 <span className="ip-num">{i + 1}</span>
-                <span className="ip-voice">🎙 {p.s}</span>
-                <span className="ip-prompt">🖼 {p.p}</span>
+                <span className="ip-voice">🎙 {p.s ?? <em className="ip-missing">нет речи</em>}</span>
+                <span className="ip-prompt">🖼 {p.p ?? <em className="ip-missing">нет промта</em>}</span>
               </div>
             ))}
-            {sLines.length > 5 && <div className="muted small">…и ещё {sLines.length - 5}</div>}
           </div>
         )}
 

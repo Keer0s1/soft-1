@@ -254,6 +254,9 @@ label > input, label > textarea, label > select { margin-top: 5px; color: var(--
 .import-pair { display: grid; grid-template-columns: 24px 1fr 1fr; gap: 10px; align-items: start; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
 .import-pair .ip-num { color: var(--muted); font-weight: 700; }
 .import-pair .ip-prompt { color: var(--muted); }
+.import-pair.bad { border-color: var(--red); background: #2e1a1a; }
+.import-pair.bad .ip-num { color: var(--red); }
+.ip-missing { color: var(--red); font-style: normal; }
 
 /* карточка сцены с превью */
 .scene-card {
