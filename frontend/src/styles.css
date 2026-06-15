@@ -40,6 +40,82 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   background: var(--panel-2); padding: 5px 10px; border-radius: 8px; font-size: 13px;
   border: 1px solid var(--border); white-space: nowrap;
 }
+
+/* ── Новая плашка статуса (тёмная таблетка) ── */
+.sb-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  background: #1a1d25;
+  border: 1px solid #2e3340;
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 13px;
+  color: #c8ccda;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.sb-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sb-dot-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  cursor: default;
+}
+
+.sb-dot-label {
+  font-size: 12px;
+  color: #8b93a3;
+}
+
+.sb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  color: #c8ccda;
+  font-weight: 500;
+}
+
+.sb-item svg {
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.sb-sep {
+  display: inline-block;
+  width: 1px;
+  height: 14px;
+  background: #2e3340;
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* Жирный разделитель между блоками fast-gen / Voicer */
+.sb-block-sep {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  background: #3a4052;
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+
+/* Мелкий текст (длительность озвучки) */
+.sb-sub {
+  font-size: 11px;
+  color: #6b7280;
+  margin-left: 1px;
+}
 .container { max-width: 980px; margin: 0 auto; padding: 24px; }
 
 /* кнопки */
@@ -145,7 +221,25 @@ label > input, label > textarea, label > select { margin-top: 5px; color: var(--
 /* модалка импорта */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
 .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; width: min(820px, 100%); max-height: 90vh; overflow: auto; }
+.import-modal { transition: box-shadow 0.15s; }
+.import-modal.import-drag-over { box-shadow: 0 0 0 2px var(--accent); }
 .import-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 12px 0; }
+
+/* Зона drag-and-drop */
+.import-dropzone {
+  display: flex; align-items: center; gap: 10px;
+  border: 1.5px dashed var(--border); border-radius: 10px;
+  padding: 12px 16px; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  margin-bottom: 4px;
+}
+.import-dropzone:hover, .import-dropzone.active {
+  border-color: var(--accent);
+  background: rgba(108,140,255,0.06);
+}
+.import-dropzone.active { border-style: solid; }
+.import-drop-icon { font-size: 20px; flex-shrink: 0; }
+
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
 
 @media (max-width: 640px) {

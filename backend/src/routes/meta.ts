@@ -86,7 +86,10 @@ metaRouter.get('/usage', async (_req, res) => {
     const limits = data.account_limits ?? {};
     const hourly = data.current_usage?.hourly_usage ?? {};
     const threads = data.current_usage?.active_threads ?? {};
-    const exp = data.expiration_date ? new Date(data.expiration_date) : null;
+
+    // expiration_date приходит как Unix-timestamp в СЕКУНДАХ → умножаем на 1000
+    const expRaw = data.expiration_date;
+    const exp = expRaw ? new Date(expRaw < 1e12 ? expRaw * 1000 : expRaw) : null;
     const daysLeft = exp ? Math.max(0, Math.ceil((exp.getTime() - Date.now()) / 86_400_000)) : null;
 
     res.json({
@@ -100,6 +103,10 @@ metaRouter.get('/usage', async (_req, res) => {
         used: hourly.video_generation?.current_usage ?? 0,
         limit: limits.video_gen_per_hour_limit ?? null,
       },
+      // Лимит картинок в час (показываем в плашке как "кредиты")
+      credits: limits.img_gen_per_hour_limit ?? null,
+      // Лимит токенов промтов в час
+      tokens: limits.prompt_tokens_per_hour_limit ?? null,
       promptTokensLimit: limits.prompt_tokens_per_hour_limit ?? null,
       daysLeft,
       window: data.usage_window ?? null,
