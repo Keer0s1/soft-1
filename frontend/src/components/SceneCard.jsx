@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api.js';
 
 const STATUS = {
@@ -9,10 +11,12 @@ const STATUS = {
 };
 
 // Одна сцена: превью картинки + статус + действия, плюс поля текста и промта.
-export default function SceneCard({ projectId, scene, index, total, onMove, onDelete, onChanged, onRefresh }) {
+export default function SceneCard({ projectId, scene, index, total, onMove, onDelete, onChanged, onRefresh, effects }) {
   const [voiceText, setVoiceText] = useState(scene.voiceText);
   const [imagePrompt, setImagePrompt] = useState(scene.imagePrompt);
   const fileRef = useRef(null);
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: scene.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
   // подхватываем правки промта/текста, если сцена обновилась извне (например импорт)
   useEffect(() => setVoiceText(scene.voiceText), [scene.voiceText]);
@@ -51,8 +55,9 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
   const variants = scene.images ?? [];
 
   return (
-    <div className="scene-card">
+    <div className="scene-card" ref={setNodeRef} style={style}>
       <div className="scene-card-num">
+        <span className="drag-handle" {...attributes} {...listeners} title="Перетащить">⠿</span>
         <span>{index + 1}</span>
         <div className="scene-move">
           <button className="icon-btn" onClick={() => onMove(-1)} disabled={index === 0}>▲</button>

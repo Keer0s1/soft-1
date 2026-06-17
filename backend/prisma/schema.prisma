@@ -25,21 +25,72 @@ model Project {
 
   // Эффекты рендера
   zoomEnabled        Boolean @default(true)
-  zoomIntensity      Float   @default(0.15) // сила движения (0.05–0.35)
+  zoomIntensity      Float   @default(0.03) // сила движения (0.02–0.35)
+  zoomSpeed          Float   @default(1.0)  // скорость анимации (0.5–2.0)
+  zoomEasing         String  @default("linear") // linear|easeIn|easeOut|easeInOut
+  cameraShake        Float   @default(0)    // дрожание камеры (0–20 px)
   zoomPresets        Json    @default("[\"in\",\"out\",\"left\",\"right\"]")
   transitionEnabled  Boolean @default(true)
   transitionDuration Float   @default(0.5)  // длительность перехода, сек
-  transitionPresets  Json    @default("[\"fade\",\"dissolve\",\"slideleft\",\"circleopen\"]")
+  transitionPresets  Json    @default("[\"fade\",\"dissolve\",\"smoothleft\",\"circleopen\",\"fadeblack\"]")
   renderQuality      String  @default("balance") // fast | balance | quality
+
+  // Кинематографические оверлеи
+  grainEnabled       Boolean @default(false)
+  grainIntensity     Float   @default(8)    // 1–25
+  vignetteEnabled    Boolean @default(false)
+  vignetteIntensity  Float   @default(0.5)  // 0.1–1.0
+  lutFile            String? // имя .cube файла из data/luts/
+
+  // Цветокоррекция
+  ccBrightness       Float   @default(0)    // -100 … +100
+  ccContrast         Float   @default(0)    // -100 … +100
+  ccSaturation       Float   @default(0)    // -100 … +100
+  ccTemperature      Float   @default(0)    // -100 (холод) … +100 (тепло)
+
+  // Фоновая музыка
+  bgMusicPath        String? // относительный путь к mp3 в DATA_DIR
+  bgMusicVolume      Float   @default(0.15) // 0.0–1.0
+  bgMusicDucking     Boolean @default(true)
+
+  // Субтитры
+  subtitlesEnabled   Boolean @default(false)
+  subtitlesStyle     String  @default("modern") // modern | classic | bold | minimal
+  subtitlesFontSize  Int     @default(48)
+  subtitlesPosition  String  @default("bottom") // bottom | center | top
+  subtitlesX         Float   @default(50)  // % по горизонтали (0–100)
+  subtitlesY         Float   @default(85)  // % по вертикали (0–100)
+  subtitlesColor     String  @default("#FFFFFF")
+  subtitlesOutline   Float   @default(3)   // толщина обводки (0–8)
+  subtitlesOutlineColor String @default("#000000")
+  subtitlesShadow    Float   @default(2)   // сила тени (0–5)
+  subtitlesAnimation String  @default("fade") // fade | slideUp | scale | typewriter
+  subtitlesMode      String  @default("karaoke") // karaoke | phrase
+  subtitlesBgEnabled Boolean @default(false)
+  subtitlesBgColor   String  @default("#000000")
+  subtitlesBgOpacity Float   @default(0.5) // 0–1
+  subtitlesSpacing   Float   @default(4)   // расстояние между словами в px (для karaoke)
 
   // Превью озвучки всего сценария (до сборки ролика)
   voicePreviewPath   String?
   voicePreviewStatus String  @default("none") // none | pending | done | error
   voicePreviewError  String  @db.Text @default("")
+  voiceTextHash      String? // hash текста, для которого сгенерирована озвучка
+  customVoicePath    String? // загруженная своя озвучка (приоритет над AI)
+
+  // Авто видео-превью (ffmpeg, низкое разрешение)
+  videoPreviewPath   String?
+  videoPreviewStatus String  @default("none") // none | pending | rendering | done | error
+  videoPreviewError  String  @db.Text @default("")
+  videoPreviewHash   String?
 
   scenes       Scene[]
   jobs         Job[]
+  sfx          SfxPlacement[]
+  cta          CtaOverlay[]
+  overlays     Overlay[]
 
+  archived     Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -54,6 +105,10 @@ model Scene {
   order       Int     // порядок в ролике, начиная с 0
   voiceText   String  @db.Text
   imagePrompt String  @db.Text
+
+  // Per-scene effect overrides (null = use project defaults / random)
+  effectOverrides  Json?
+  durationOverride Float?
 
   // Картинка сцены
   imagePath    String? // относительный путь активной картинки в DATA_DIR
@@ -139,7 +194,85 @@ model SceneResult {
   status      String  @default("pending") // pending | done | error
   error       String  @db.Text @default("")
 
+  // Incremental re-render cache
+  clipPath    String?
+  contentHash String?
+
   createdAt   DateTime @default(now())
 
   @@index([jobId, order])
+}
+
+// Звуковые эффекты: размещения на таймлайне проекта
+model SfxPlacement {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  soundFile String   // относительный путь к файлу (из библиотеки или custom)
+  label     String   @default("")
+  timeSec   Float    // момент воспроизведения (секунды от начала)
+  volume    Float    @default(1.0)
+  category  String   @default("library") // library | custom
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// CTA-оверлеи: подпишись, лайк и т.п. — всплывают в нужный момент видео
+model CtaOverlay {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  text        String
+  emoji       String   @default("")
+  imagePath   String?
+  timeSec     Float
+  durationSec Float    @default(3.0)
+  x           Float    @default(80) // % от ширины (0-100)
+  y           Float    @default(85) // % от высоты (0-100)
+  scale       Float    @default(1.0) // масштаб (0.5 - 2.0)
+  animation   String   @default("slideIn")
+  style       String   @default("pill")
+  color       String   @default("#FF0000")
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// Оверлеи: фото/видео/текст накладки с анимациями и привязанным звуком
+model Overlay {
+  id            String   @id @default(uuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type          String   // text | image | video
+  text          String   @default("")
+  fontFamily    String   @default("Arial")
+  fontSize      Int      @default(48)
+  fontColor     String   @default("#FFFFFF")
+  fontWeight    String   @default("bold")
+  outlineWidth  Int      @default(3)
+  outlineColor  String   @default("#000000")
+  shadowSize    Int      @default(2)
+  bgEnabled     Boolean  @default(false)
+  bgColor       String   @default("#000000")
+  bgOpacity     Float    @default(0.5)
+  bgRadius      Int      @default(8)
+  textPreset    String   @default("custom")
+  filePath      String?
+  x             Float    @default(50)
+  y             Float    @default(50)
+  scale         Float    @default(1.0)
+  rotation      Float    @default(0)
+  timeSec       Float
+  durationSec   Float    @default(3.0)
+  animIn        String   @default("fadeIn")
+  animOut       String   @default("fadeOut")
+  animIdle      String   @default("none")
+  animInDur     Float    @default(0.4)
+  animOutDur    Float    @default(0.3)
+  soundFile     String?
+  soundVolume   Float    @default(1.0)
+  createdAt     DateTime @default(now())
+
+  @@index([projectId])
 }

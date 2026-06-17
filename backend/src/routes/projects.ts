@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import path from 'node:path';
+import fs from 'node:fs';
 import { prisma } from '../db.js';
 import { parseTwoFiles } from '../lib/parse.js';
 import { makeFolderName } from '../lib/paths.js';
 import { env } from '../env.js';
+import { createProjectSchema, updateProjectSchema, replaceScenesSchema, parseFilesSchema } from '../schemas.js';
 
 export const projectsRouter = Router();
 
@@ -12,12 +14,20 @@ const folderPathOf = (p: { id: string; folderName: string }) =>
   path.join(env.DATA_DIR, 'projects', p.folderName || p.id);
 
 // Список проектов (с числом сцен и последним запуском)
-projectsRouter.get('/', async (_req, res) => {
+projectsRouter.get('/', async (req, res) => {
+  const showArchived = req.query.archived === 'true';
   const projects = await prisma.project.findMany({
+    where: { archived: showArchived },
     orderBy: { updatedAt: 'desc' },
     include: {
       _count: { select: { scenes: true, jobs: true } },
       jobs: { orderBy: { createdAt: 'desc' }, take: 1 },
+      scenes: {
+        where: { imageStatus: 'done' },
+        orderBy: { order: 'asc' },
+        take: 1,
+        select: { imagePath: true },
+      },
     },
   });
   res.json(projects);
@@ -25,8 +35,9 @@ projectsRouter.get('/', async (_req, res) => {
 
 // Создать проект (+ задать человекочитаемое имя папки на диске)
 projectsRouter.post('/', async (req, res) => {
-  const { title } = req.body ?? {};
-  const clean = title?.trim() || 'Без названия';
+  const parsed = createProjectSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+  const clean = parsed.data.title?.trim() || 'Без названия';
   const created = await prisma.project.create({ data: { title: clean } });
   const project = await prisma.project.update({
     where: { id: created.id },
@@ -53,47 +64,92 @@ projectsRouter.get('/:id', async (req, res) => {
 
 // Обновить настройки проекта
 projectsRouter.patch('/:id', async (req, res) => {
-  const { title, provider, model, aspectRatio, voiceTemplateId } = req.body ?? {};
+  const parsed = updateProjectSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   const data: Record<string, unknown> = {};
-  if (title !== undefined) data.title = String(title);
-  if (provider !== undefined) data.provider = String(provider);
-  if (model !== undefined) data.model = model === null ? null : String(model);
-  if (aspectRatio !== undefined) data.aspectRatio = String(aspectRatio);
-  if (voiceTemplateId !== undefined)
-    data.voiceTemplateId = voiceTemplateId === null ? null : String(voiceTemplateId);
-
-  // Настройки эффектов рендера
-  const b = req.body ?? {};
-  if (b.zoomEnabled !== undefined) data.zoomEnabled = !!b.zoomEnabled;
-  if (b.zoomIntensity !== undefined) data.zoomIntensity = Math.min(0.5, Math.max(0, Number(b.zoomIntensity)));
-  if (b.zoomPresets !== undefined && Array.isArray(b.zoomPresets)) data.zoomPresets = b.zoomPresets;
-  if (b.transitionEnabled !== undefined) data.transitionEnabled = !!b.transitionEnabled;
-  if (b.transitionDuration !== undefined) data.transitionDuration = Math.min(2, Math.max(0.1, Number(b.transitionDuration)));
-  if (b.transitionPresets !== undefined && Array.isArray(b.transitionPresets)) data.transitionPresets = b.transitionPresets;
-  if (b.renderQuality !== undefined) data.renderQuality = String(b.renderQuality);
+  const b = parsed.data;
+  if (b.title !== undefined) data.title = b.title;
+  if (b.provider !== undefined) data.provider = b.provider;
+  if (b.model !== undefined) data.model = b.model;
+  if (b.aspectRatio !== undefined) data.aspectRatio = b.aspectRatio;
+  if (b.voiceTemplateId !== undefined) data.voiceTemplateId = b.voiceTemplateId;
+  if (b.zoomEnabled !== undefined) data.zoomEnabled = b.zoomEnabled;
+  if (b.zoomIntensity !== undefined) data.zoomIntensity = b.zoomIntensity;
+  if (b.zoomPresets !== undefined) data.zoomPresets = b.zoomPresets;
+  if (b.transitionEnabled !== undefined) data.transitionEnabled = b.transitionEnabled;
+  if (b.transitionDuration !== undefined) data.transitionDuration = b.transitionDuration;
+  if (b.transitionPresets !== undefined) data.transitionPresets = b.transitionPresets;
+  if (b.renderQuality !== undefined) data.renderQuality = b.renderQuality;
+  // Grading
+  if (b.grainEnabled !== undefined) data.grainEnabled = b.grainEnabled;
+  if (b.grainIntensity !== undefined) data.grainIntensity = b.grainIntensity;
+  if (b.vignetteEnabled !== undefined) data.vignetteEnabled = b.vignetteEnabled;
+  if (b.vignetteIntensity !== undefined) data.vignetteIntensity = b.vignetteIntensity;
+  if (b.lutFile !== undefined) data.lutFile = b.lutFile;
+  // Color correction
+  if (b.ccBrightness !== undefined) data.ccBrightness = b.ccBrightness;
+  if (b.ccContrast !== undefined) data.ccContrast = b.ccContrast;
+  if (b.ccSaturation !== undefined) data.ccSaturation = b.ccSaturation;
+  if (b.ccTemperature !== undefined) data.ccTemperature = b.ccTemperature;
+  // Music
+  if (b.bgMusicPath !== undefined) data.bgMusicPath = b.bgMusicPath;
+  if (b.bgMusicVolume !== undefined) data.bgMusicVolume = b.bgMusicVolume;
+  if (b.bgMusicDucking !== undefined) data.bgMusicDucking = b.bgMusicDucking;
+  // Subtitles
+  if (b.subtitlesEnabled !== undefined) data.subtitlesEnabled = b.subtitlesEnabled;
+  if (b.subtitlesStyle !== undefined) data.subtitlesStyle = b.subtitlesStyle;
+  if (b.subtitlesFontSize !== undefined) data.subtitlesFontSize = b.subtitlesFontSize;
+  if (b.subtitlesPosition !== undefined) data.subtitlesPosition = b.subtitlesPosition;
+  if (b.subtitlesX !== undefined) data.subtitlesX = b.subtitlesX;
+  if (b.subtitlesY !== undefined) data.subtitlesY = b.subtitlesY;
+  if (b.subtitlesColor !== undefined) data.subtitlesColor = b.subtitlesColor;
+  if (b.subtitlesOutline !== undefined) data.subtitlesOutline = b.subtitlesOutline;
+  if (b.subtitlesOutlineColor !== undefined) data.subtitlesOutlineColor = b.subtitlesOutlineColor;
+  if (b.subtitlesShadow !== undefined) data.subtitlesShadow = b.subtitlesShadow;
+  if (b.subtitlesAnimation !== undefined) data.subtitlesAnimation = b.subtitlesAnimation;
+  if (b.subtitlesBgEnabled !== undefined) data.subtitlesBgEnabled = b.subtitlesBgEnabled;
+  if (b.subtitlesBgColor !== undefined) data.subtitlesBgColor = b.subtitlesBgColor;
+  if (b.subtitlesBgOpacity !== undefined) data.subtitlesBgOpacity = b.subtitlesBgOpacity;
 
   const project = await prisma.project.update({ where: { id: req.params.id }, data });
   res.json(project);
 });
 
-// Удалить проект
+// Удалить проект (soft: архив, permanent: полное удаление с файлами)
 projectsRouter.delete('/:id', async (req, res) => {
-  await prisma.project.delete({ where: { id: req.params.id } });
+  const permanent = req.query.permanent === 'true';
+  if (permanent) {
+    const project = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (project) {
+      const dir = path.join(env.DATA_DIR, 'projects', project.folderName || project.id);
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ok */ }
+    }
+    await prisma.project.delete({ where: { id: req.params.id } });
+  } else {
+    await prisma.project.update({ where: { id: req.params.id }, data: { archived: true } });
+  }
   res.status(204).end();
+});
+
+// Восстановить архивный проект
+projectsRouter.post('/:id/restore', async (req, res) => {
+  const project = await prisma.project.update({ where: { id: req.params.id }, data: { archived: false } });
+  res.json(project);
 });
 
 // Полностью заменить сцены проекта массивом [{voiceText, imagePrompt}]
 projectsRouter.put('/:id/scenes', async (req, res) => {
-  const scenes = req.body?.scenes;
-  if (!Array.isArray(scenes)) return res.status(400).json({ error: 'Ожидается массив scenes' });
+  const parsed = replaceScenesSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+  const scenes = parsed.data.scenes;
   await prisma.$transaction([
     prisma.scene.deleteMany({ where: { projectId: req.params.id } }),
     prisma.scene.createMany({
-      data: scenes.map((s: any, i: number) => ({
+      data: scenes.map((s, i) => ({
         projectId: req.params.id,
         order: i,
-        voiceText: String(s.voiceText ?? ''),
-        imagePrompt: String(s.imagePrompt ?? ''),
+        voiceText: s.voiceText,
+        imagePrompt: s.imagePrompt,
       })),
     }),
     prisma.project.update({ where: { id: req.params.id }, data: { updatedAt: new Date() } }),
@@ -107,9 +163,10 @@ projectsRouter.put('/:id/scenes', async (req, res) => {
 
 // Разобрать два файла (речь + промты) в сцены по строкам (без сохранения)
 projectsRouter.post('/:id/parse', async (req, res) => {
-  const { speechText, promptsText } = req.body ?? {};
+  const parsed = parseFilesSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   try {
-    const scenes = parseTwoFiles(String(speechText ?? ''), String(promptsText ?? ''));
+    const scenes = parseTwoFiles(parsed.data.speechText, parsed.data.promptsText);
     res.json({ scenes });
   } catch (e: any) {
     res.status(400).json({ error: String(e?.message ?? e) });

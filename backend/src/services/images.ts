@@ -9,9 +9,13 @@ import { prisma } from '../db.js';
 import { env } from '../env.js';
 import * as fastgen from '../lib/fastgen.js';
 import { rel, projectDir } from '../lib/paths.js';
+import { emitToProject } from '../lib/socket.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const ATTEMPTS = 3; // авто-ретрай: их API часто отдаёт ошибки
+const ATTEMPTS = 3;
+
+// Трекаем сцены с активным запросом на API (уже отправлены, ждут результат)
+export const activeGenerations = new Set<string>();
 
 /** Сделать вариант активным: проставить путь/статус на сцене. */
 async function setActive(sceneId: string, img: { id: string; path: string; source: string; seed: number | null; opId: string | null }) {
@@ -33,20 +37,32 @@ async function setActive(sceneId: string, img: { id: string; path: string; sourc
 /** Сгенерировать (или пере-генерировать) картинку одной сцены. */
 export async function generateSceneImage(
   sceneId: string,
-  opts: { newSeed?: boolean } = {},
+  opts: { newSeed?: boolean; signal?: AbortSignal } = {},
 ): Promise<void> {
+  if (opts.signal?.aborted) return;
   const scene = await prisma.scene.findUnique({ where: { id: sceneId }, include: { project: true } });
   if (!scene) return;
+  if (scene.imageStatus === 'pending') return;
   const project = scene.project;
 
   await prisma.scene.update({ where: { id: sceneId }, data: { imageStatus: 'pending', imageError: '' } });
+
+  if (opts.signal?.aborted) {
+    await prisma.scene.update({ where: { id: sceneId }, data: { imageStatus: 'none', imageError: 'Отменено' } });
+    return;
+  }
 
   const seed = opts.newSeed
     ? Math.floor(Math.random() * 2_000_000_000)
     : scene.imageSeed ?? undefined;
 
   let lastErr: unknown;
+  let rateLimitRetries = 0;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    if (opts.signal?.aborted) {
+      await prisma.scene.update({ where: { id: sceneId }, data: { imageStatus: 'none', imageError: 'Отменено' } });
+      return;
+    }
     try {
       const opId = await fastgen.submitImage(scene.imagePrompt, {
         provider: project.provider,
@@ -54,7 +70,13 @@ export async function generateSceneImage(
         aspectRatio: project.aspectRatio,
         seed: seed ?? null,
       });
-      const bytes = await fastgen.waitForImage(opId);
+      activeGenerations.add(sceneId);
+      let bytes: Buffer;
+      try {
+        bytes = await fastgen.waitForImage(opId);
+      } finally {
+        activeGenerations.delete(sceneId);
+      }
 
       const dir = path.join(projectDir(project.id, project.folderName), 'images');
       fs.mkdirSync(dir, { recursive: true });
@@ -65,10 +87,18 @@ export async function generateSceneImage(
         data: { sceneId, path: rel(file), source: 'ai', seed: seed ?? null, prompt: scene.imagePrompt, opId },
       });
       await setActive(sceneId, variant);
+      emitToProject(project.id, 'scene:image:done', { sceneId });
       return;
-    } catch (e) {
+    } catch (e: any) {
       lastErr = e;
-      if (attempt < ATTEMPTS) await sleep(1500 * attempt);
+      const is429 = e?.message?.includes('429');
+      if (is429 && rateLimitRetries < 30) {
+        rateLimitRetries++;
+        attempt--;
+        await sleep(5000);
+      } else if (attempt < ATTEMPTS) {
+        await sleep(1500 * attempt);
+      }
     }
   }
 
@@ -76,26 +106,28 @@ export async function generateSceneImage(
     where: { id: sceneId },
     data: { imageStatus: 'error', imageError: String((lastErr as any)?.message ?? lastErr) },
   });
+  emitToProject(project.id, 'scene:image:error', { sceneId });
 }
 
 /** Сгенерировать картинки для всех сцен без готовой картинки (none/error). */
-export async function generateMissing(projectId: string): Promise<void> {
+export async function generateMissing(projectId: string, signal?: AbortSignal): Promise<void> {
   const scenes = await prisma.scene.findMany({
     where: { projectId, imageStatus: { in: ['none', 'error'] } },
     orderBy: { order: 'asc' },
   });
   if (scenes.length === 0) return;
 
+  const concurrency = env.IMAGE_CONCURRENCY;
   let next = 0;
-  const limit = Math.min(env.IMAGE_CONCURRENCY, scenes.length);
   const runner = async () => {
     for (;;) {
+      if (signal?.aborted) return;
       const i = next++;
       if (i >= scenes.length) return;
-      await generateSceneImage(scenes[i].id);
+      await generateSceneImage(scenes[i].id, { signal });
     }
   };
-  await Promise.all(Array.from({ length: limit }, runner));
+  await Promise.all(Array.from({ length: Math.min(concurrency, scenes.length) }, runner));
 }
 
 /** Сохранить загруженную пользователем картинку (data-URI) как вариант сцены. */

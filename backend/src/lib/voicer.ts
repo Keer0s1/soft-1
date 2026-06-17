@@ -113,3 +113,29 @@ export async function downloadResult(taskId: number): Promise<Buffer> {
   if (!r.ok) throw new VoicerError(`Voicer /result: ${r.status}`);
   return Buffer.from(await r.arrayBuffer());
 }
+
+export interface WordTimestamp {
+  word: string;
+  startSec: number;
+  endSec: number;
+}
+
+/** Попытаться получить пословные тайминги. Возвращает null если API не поддерживает. */
+export async function downloadTimestamps(taskId: number): Promise<WordTimestamp[] | null> {
+  ensureConfigured();
+  try {
+    const r = await fetch(`${env.VOICER_API_URL}/tasks/${taskId}/timestamps`, { headers: headers() });
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    // Поддерживаем формат: { words: [{ word, start, end }] } или [{ word, start, end }]
+    const words = Array.isArray(data) ? data : data?.words;
+    if (!Array.isArray(words) || words.length === 0) return null;
+    return words.map((w: any) => ({
+      word: String(w.word ?? w.text ?? ''),
+      startSec: Number(w.start ?? w.startSec ?? w.start_sec ?? 0),
+      endSec: Number(w.end ?? w.endSec ?? w.end_sec ?? 0),
+    }));
+  } catch {
+    return null;
+  }
+}

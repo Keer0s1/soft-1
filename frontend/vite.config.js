@@ -9,6 +9,10 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8000',
       '/files': 'http://localhost:8000',
+      '/socket.io': {
+        target: 'http://localhost:8000',
+        ws: true,
+      },
     },
   },
 });

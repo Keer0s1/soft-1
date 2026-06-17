@@ -1,5 +1,6 @@
 import { Link, Outlet } from 'react-router-dom';
 import StatusBar from './components/StatusBar.jsx';
+import ToastContainer from './components/Toast.jsx';
 
 export default function App() {
   return (
@@ -11,6 +12,7 @@ export default function App() {
       <main className="container">
         <Outlet />
       </main>
+      <ToastContainer />
     </div>
   );
 }

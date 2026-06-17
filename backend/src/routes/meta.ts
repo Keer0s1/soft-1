@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
 import { IMAGE_PROVIDERS } from '../lib/fastgen.js';
 import * as fastgen from '../lib/fastgen.js';
 import * as voicer from '../lib/voicer.js';
-import { ASPECT_SIZES } from '../env.js';
+import { ASPECT_SIZES, env } from '../env.js';
 import { cached } from '../lib/cache.js';
 import { ZOOM_PRESETS, TRANSITION_PRESETS } from '../lib/effects.js';
 
@@ -166,4 +168,43 @@ metaRouter.get('/voicer/templates', async (_req, res) => {
   } catch (e: any) {
     res.status(502).json({ error: String(e?.message ?? e) });
   }
+});
+
+// Доступные LUT-файлы для цветокоррекции
+metaRouter.get('/luts', (_req, res) => {
+  const lutsDir = path.join(env.DATA_DIR, 'luts');
+  if (!fs.existsSync(lutsDir)) { res.json([]); return; }
+  const files = fs.readdirSync(lutsDir).filter((f) => f.endsWith('.cube'));
+  const luts = files.map((f) => ({
+    file: f,
+    name: f.replace('.cube', '').replace(/[-_]/g, ' '),
+  }));
+  res.json(luts);
+});
+
+// Содержимое конкретного LUT-файла (.cube) для live-превью на фронте
+metaRouter.get('/luts/:file', (req, res) => {
+  const file = req.params.file;
+  if (!file.endsWith('.cube') || file.includes('..') || file.includes('/') || file.includes('\\')) {
+    res.status(400).json({ error: 'invalid file' });
+    return;
+  }
+  const filePath = path.join(env.DATA_DIR, 'luts', file);
+  if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'not found' }); return; }
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  fs.createReadStream(filePath).pipe(res);
+});
+
+// Доступная фоновая музыка
+metaRouter.get('/music', (_req, res) => {
+  const musicDir = path.join(env.DATA_DIR, 'music');
+  if (!fs.existsSync(musicDir)) { res.json([]); return; }
+  const files = fs.readdirSync(musicDir).filter((f) => /\.(mp3|wav|ogg|m4a)$/i.test(f));
+  const tracks = files.map((f) => ({
+    file: f,
+    name: f.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '),
+    path: `music/${f}`,
+  }));
+  res.json(tracks);
 });

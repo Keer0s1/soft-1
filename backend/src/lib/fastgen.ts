@@ -148,12 +148,13 @@ export function extractImageBytes(result: unknown): Buffer {
 /** Поллить операцию до готовности, вернуть байты картинки. */
 export async function waitForImage(
   operationId: string,
-  opts: { pollMs?: number; timeoutMs?: number } = {},
+  opts: { pollMs?: number; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<Buffer> {
-  const pollMs = opts.pollMs ?? 4000;
+  const pollMs = opts.pollMs ?? 2000;
   const timeoutMs = opts.timeoutMs ?? 600_000;
   let waited = 0;
   for (;;) {
+    if (opts.signal?.aborted) throw new FastGenError('Отменено');
     const data: any = await getOperation(operationId);
     const status = String(data.status ?? '').toLowerCase();
     if (['success', 'succeeded', 'completed', 'done'].includes(status)) {

@@ -7,10 +7,12 @@ import path from 'node:path';
 import AdmZip from 'adm-zip';
 import ffmpegPath from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
-import { env, ASPECT_SIZES } from '../env.js';
+import { env } from '../env.js';
 
 const FFMPEG = (ffmpegPath as unknown as string) || 'ffmpeg';
 const FFPROBE = ffprobeStatic.path || 'ffprobe';
+
+const posix = (p: string) => p.split(path.sep).join('/');
 
 function run(bin: string, args: string[], errPrefix: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -72,7 +74,7 @@ export async function saveAudio(raw: Buffer, jobDir: string): Promise<string> {
     return out;
   }
   const listPath = path.join(jobDir, 'audio_concat.txt');
-  fs.writeFileSync(listPath, paths.map((p) => `file '${p}'\n`).join(''));
+  fs.writeFileSync(listPath, paths.map((p) => `file '${posix(p)}'\n`).join(''));
   await run(
     FFMPEG,
     ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c:a', 'libmp3lame', '-q:a', '2', out],
@@ -92,54 +94,6 @@ async function scaleImage(src: string, dst: string, w: number, h: number): Promi
   );
 }
 
-export interface RenderOpts {
-  jobDir: string;
-  aspectRatio: string;
-  audioPath: string;
-  /** Картинки по порядку сцен и их длительности (сек). */
-  images: { path: string; durationSec: number }[];
-}
-
-/** Собрать слайдшоу из картинок + озвучку в один mp4. Возвращает путь к видео. */
-export async function renderVideo(opts: RenderOpts): Promise<string> {
-  const [w, h] = ASPECT_SIZES[opts.aspectRatio] ?? [1920, 1080];
-
-  const scaledDir = path.join(opts.jobDir, 'images_scaled');
-  fs.mkdirSync(scaledDir, { recursive: true });
-
-  const scaled: { path: string; durationSec: number }[] = [];
-  for (const img of opts.images) {
-    const sp = path.join(scaledDir, path.basename(img.path));
-    await scaleImage(img.path, sp, w, h);
-    scaled.push({ path: sp, durationSec: img.durationSec });
-  }
-
-  // concat demuxer: каждая картинка с указанной длительностью
-  const concatPath = path.join(opts.jobDir, 'video_concat.txt');
-  const lines: string[] = [];
-  for (const s of scaled) {
-    lines.push(`file '${s.path}'`);
-    lines.push(`duration ${s.durationSec.toFixed(3)}`);
-  }
-  // требование concat demuxer — повторить последний файл
-  lines.push(`file '${scaled[scaled.length - 1].path}'`);
-  fs.writeFileSync(concatPath, lines.join('\n') + '\n');
-
-  const out = path.join(opts.jobDir, 'video.mp4');
-  const cmd = [
-    '-y',
-    '-f', 'concat', '-safe', '0', '-i', concatPath,
-    '-i', opts.audioPath,
-    '-vf', 'format=yuv420p',
-    '-r', String(env.VIDEO_FPS),
-    '-c:v', env.VIDEO_CODEC,
-  ];
-  if (env.VIDEO_CODEC === 'libx264') cmd.push('-preset', env.VIDEO_PRESET, '-tune', 'stillimage');
-  cmd.push('-c:a', 'aac', '-b:a', '192k', '-shortest', out);
-
-  await run(FFMPEG, cmd, 'ffmpeg не смог собрать видео');
-  return out;
-}
 
 // ───────────────────────── новый движок: клипы + переходы ─────────────────────────
 
@@ -154,9 +108,14 @@ export function qualityOf(q: string): QualitySettings {
 }
 
 function videoCodecArgs(q: QualitySettings): string[] {
-  // env.VIDEO_CODEC позволяет включить GPU (h264_nvenc/qsv/amf) через .env
-  if (env.VIDEO_CODEC && env.VIDEO_CODEC !== 'libx264') {
-    return ['-c:v', env.VIDEO_CODEC];
+  const codec = env.VIDEO_CODEC || 'libx264';
+  if (codec === 'h264_nvenc') {
+    const preset = env.VIDEO_PRESET || 'p4';
+    const cq = q.crf <= 20 ? 20 : q.crf <= 23 ? 24 : 28;
+    return ['-c:v', 'h264_nvenc', '-preset', preset, '-rc', 'vbr', '-cq', String(cq), '-pix_fmt', 'yuv420p'];
+  }
+  if (codec !== 'libx264') {
+    return ['-c:v', codec, '-pix_fmt', 'yuv420p'];
   }
   return ['-c:v', 'libx264', '-preset', q.preset, '-crf', String(q.crf), '-pix_fmt', 'yuv420p'];
 }
@@ -181,7 +140,7 @@ export async function renderSceneClip(o: SceneClipOpts): Promise<void> {
   const args = ['-y'];
   if (!o.zoom) args.push('-loop', '1', '-t', o.durationSec.toFixed(3));
   args.push('-i', o.imagePath, '-vf', vf, '-r', String(o.fps));
-  args.push(...videoCodecArgs(o.quality), '-an', o.outPath);
+  args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p', '-an', o.outPath);
   await run(FFMPEG, args, 'ffmpeg не смог отрендерить сцену');
 }
 
@@ -204,7 +163,7 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
   // Без переходов или одна сцена — быстрый concat со stream-copy
   if (!o.transitions || o.transitions.length === 0 || n === 1) {
     const listPath = path.join(o.workDir, 'clips.txt');
-    fs.writeFileSync(listPath, o.clips.map((c) => `file '${c.path}'`).join('\n') + '\n');
+    fs.writeFileSync(listPath, o.clips.map((c) => `file '${posix(c.path)}'`).join('\n') + '\n');
     await run(
       FFMPEG,
       ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-i', o.audioPath,
@@ -237,7 +196,182 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
   await run(
     FFMPEG,
     ['-y', ...inputs, '-filter_complex', chain, '-map', '[vout]', '-map', `${n}:a`,
-      ...videoCodecArgs(o.quality), '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(o.quality.crf), '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
     'ffmpeg не смог собрать видео с переходами',
   );
 }
+
+// ───────────────────────── Grading (post-process) ─────────────────────────
+
+export interface GradingOpts {
+  grainEnabled?: boolean;
+  grainIntensity?: number;
+  vignetteEnabled?: boolean;
+  vignetteIntensity?: number;
+  lutFile?: string | null;
+  subtitlesFile?: string | null;
+  ccBrightness?: number;
+  ccContrast?: number;
+  ccSaturation?: number;
+  ccTemperature?: number;
+  quality: QualitySettings;
+}
+
+export async function applyGrading(inputPath: string, outputPath: string, opts: GradingOpts): Promise<void> {
+  const filters: string[] = [];
+
+  if (opts.lutFile && fs.existsSync(opts.lutFile)) {
+    const relLut = path.relative(process.cwd(), opts.lutFile).split(path.sep).join('/');
+    filters.push(`lut3d=${relLut}:interp=tetrahedral`);
+  }
+
+  // Цветокоррекция (eq фильтр)
+  const bright = opts.ccBrightness ?? 0;
+  const contr = opts.ccContrast ?? 0;
+  const sat = opts.ccSaturation ?? 0;
+  if (bright !== 0 || contr !== 0 || sat !== 0) {
+    // eq: brightness [-1..1], contrast [0..2], saturation [0..3]
+    const eqBright = (bright / 100).toFixed(3);
+    const eqContrast = (1 + contr / 100).toFixed(3);
+    const eqSat = (1 + sat / 100).toFixed(3);
+    filters.push(`eq=brightness=${eqBright}:contrast=${eqContrast}:saturation=${eqSat}`);
+  }
+
+  // Температура через colorbalance
+  const temp = opts.ccTemperature ?? 0;
+  if (temp !== 0) {
+    const shift = (temp / 100 * 0.3).toFixed(3);
+    const negShift = (-temp / 100 * 0.3).toFixed(3);
+    filters.push(`colorbalance=rs=${shift}:gs=0:bs=${negShift}:rm=${shift}:gm=0:bm=${negShift}:rh=${shift}:gh=0:bh=${negShift}`);
+  }
+  if (opts.grainEnabled) {
+    const s = Math.min(25, Math.max(1, opts.grainIntensity ?? 8));
+    filters.push(`noise=c0s=${s}:c0f=t+u:c1s=${Math.round(s * 0.3)}:c1f=t+u`);
+  }
+  if (opts.vignetteEnabled) {
+    const v = Math.min(1.0, Math.max(0.1, opts.vignetteIntensity ?? 0.5));
+    const angle = (Math.PI / 3) * (1 - v) + (Math.PI / 10) * v;
+    filters.push(`vignette=angle=${angle.toFixed(4)}`);
+  }
+  if (opts.subtitlesFile && fs.existsSync(opts.subtitlesFile)) {
+    const relSubs = path.relative(process.cwd(), opts.subtitlesFile).split(path.sep).join('/');
+    filters.push(`ass=${relSubs}`);
+  }
+
+  if (filters.length === 0) {
+    fs.copyFileSync(inputPath, outputPath);
+    return;
+  }
+
+  const vf = filters.join(',');
+  await run(
+    FFMPEG,
+    ['-y', '-i', inputPath, '-vf', vf, ...videoCodecArgs(opts.quality), '-c:a', 'copy', outputPath],
+    'ffmpeg не смог применить грейдинг',
+  );
+}
+
+// ───────────────────────── Audio ducking ─────────────────────────
+
+export interface DuckingOpts {
+  voicePath: string;
+  musicPath: string;
+  outputPath: string;
+  musicVolume?: number;
+  ducking?: boolean;
+  totalDuration?: number;
+}
+
+export async function mixAudioWithDucking(opts: DuckingOpts): Promise<void> {
+  const vol = Math.min(1.0, Math.max(0.0, opts.musicVolume ?? 0.15));
+  const dur = opts.totalDuration ? ['-t', opts.totalDuration.toFixed(3)] : [];
+
+  if (!opts.ducking) {
+    await run(
+      FFMPEG,
+      ['-y', '-i', opts.voicePath, '-stream_loop', '-1', '-i', opts.musicPath,
+        ...dur,
+        '-filter_complex',
+        `[1:a]volume=${vol.toFixed(2)}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=3[out]`,
+        '-map', '[out]', '-c:a', 'libmp3lame', '-q:a', '2', opts.outputPath],
+      'ffmpeg не смог смикшировать аудио',
+    );
+    return;
+  }
+
+  await run(
+    FFMPEG,
+    ['-y', '-i', opts.voicePath, '-stream_loop', '-1', '-i', opts.musicPath,
+      ...dur,
+      '-filter_complex',
+      `[0:a]asplit=2[sc][voice];` +
+      `[1:a]volume=${vol.toFixed(2)}[mv];` +
+      `[mv][sc]sidechaincompress=threshold=0.015:ratio=8:attack=10:release=600:level_sc=0.8[ducked];` +
+      `[voice][ducked]amix=inputs=2:duration=first:dropout_transition=3[out]`,
+      '-map', '[out]', '-c:a', 'libmp3lame', '-q:a', '2', opts.outputPath],
+    'ffmpeg не смог смикшировать аудио с ducking',
+  );
+}
+
+export interface SfxOverlay {
+  filePath: string;
+  timeSec: number;
+  volume: number;
+}
+
+/** Overlay SFX sounds at specific timestamps onto a base audio track. */
+export async function overlaySfx(basePath: string, sfx: SfxOverlay[], outputPath: string): Promise<void> {
+  if (sfx.length === 0) return;
+  const inputs = ['-y', '-i', basePath];
+  for (const s of sfx) inputs.push('-i', s.filePath);
+  const filters: string[] = [];
+  const mixInputs: string[] = ['[0:a]'];
+  for (let i = 0; i < sfx.length; i++) {
+    const delayMs = Math.round(sfx[i].timeSec * 1000);
+    const vol = sfx[i].volume.toFixed(2);
+    filters.push(`[${i + 1}:a]volume=${vol},adelay=${delayMs}|${delayMs}[sfx${i}]`);
+    mixInputs.push(`[sfx${i}]`);
+  }
+  filters.push(`${mixInputs.join('')}amix=inputs=${sfx.length + 1}:duration=first:dropout_transition=2[out]`);
+  await run(FFMPEG, [...inputs, '-filter_complex', filters.join(';'), '-map', '[out]', '-c:a', 'libmp3lame', '-q:a', '2', outputPath], 'ffmpeg не смог наложить SFX');
+}
+
+export interface VideoOverlay {
+  filePath: string;
+  timeSec: number;
+  durationSec: number;
+  x: number; // 0-100 %
+  y: number;
+  scale: number;
+  resX: number;
+  resY: number;
+}
+
+/** Overlay video files (with alpha) on top of base video at specific times/positions. */
+export async function overlayVideos(basePath: string, overlays: VideoOverlay[], outputPath: string): Promise<void> {
+  if (overlays.length === 0) return;
+  const inputs = ['-y', '-i', basePath];
+  for (const o of overlays) {
+    const isImage = /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(o.filePath);
+    if (isImage) inputs.push('-loop', '1', '-i', o.filePath);
+    else inputs.push('-i', o.filePath);
+  }
+
+  const filters: string[] = [];
+  let prev = '[0:v]';
+  for (let i = 0; i < overlays.length; i++) {
+    const o = overlays[i];
+    const w = Math.round(o.resX * 0.3 * o.scale);
+    const px = Math.round((o.x / 100) * o.resX - w / 2);
+    const py = Math.round((o.y / 100) * o.resY - (w * 0.75) / 2);
+    const enable = `between(t,${o.timeSec.toFixed(2)},${(o.timeSec + o.durationSec).toFixed(2)})`;
+    filters.push(`[${i + 1}:v]scale=${w}:-1[ov${i}]`);
+    const next = i < overlays.length - 1 ? `[tmp${i}]` : '[vout]';
+    filters.push(`${prev}[ov${i}]overlay=x=${px}:y=${py}:enable='${enable}'${next}`);
+    prev = next;
+  }
+
+  await run(FFMPEG, [...inputs, '-filter_complex', filters.join(';'), '-map', '[vout]', '-map', '0:a?', '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-shortest', outputPath], 'ffmpeg не смог наложить видео-оверлеи');
+}
+
