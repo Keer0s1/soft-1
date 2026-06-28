@@ -239,6 +239,14 @@ model CtaOverlay {
   @@index([projectId])
 }
 
+/// Глобальные настройки приложения (key/value).
+/// Сейчас хранит конфиг прокси для исходящих запросов к Voicer / fast-gen.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
 // Оверлеи: фото/видео/текст накладки с анимациями и привязанным звуком
 model Overlay {
   id            String   @id @default(uuid())

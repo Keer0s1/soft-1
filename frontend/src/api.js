@@ -33,6 +33,7 @@ export const api = {
 
   // Импорт целиком (заменяет все сцены)
   replaceScenes: (id, scenes) => req('PUT', `/api/projects/${id}/scenes`, { scenes }),
+  replaceScenesWithImages: (id, scenes) => req('POST', `/api/projects/${id}/scenes/with-images`, { scenes }),
   parseFiles: (id, speechText, promptsText) =>
     req('POST', `/api/projects/${id}/parse`, { speechText, promptsText }),
 
@@ -49,6 +50,7 @@ export const api = {
   // Озвучка-превью
   voicePreview: (id) => req('POST', `/api/projects/${id}/voice-preview`),
   voiceTimestamps: (id) => req('GET', `/api/projects/${id}/voice-timestamps`),
+  voiceSilences: (id) => req('GET', `/api/projects/${id}/voice-silences`),
   uploadVoice: (id, dataUri) => req('POST', `/api/projects/${id}/voice-upload`, { dataUri }),
   removeCustomVoice: (id) => req('DELETE', `/api/projects/${id}/voice-custom`),
 
@@ -95,4 +97,9 @@ export const api = {
   effects: () => req('GET', '/api/meta/effects'),
   luts: () => req('GET', '/api/meta/luts'),
   musicList: () => req('GET', '/api/meta/music'),
+
+  // Прокси
+  proxyGet: () => req('GET', '/api/meta/proxy'),
+  proxySave: (data) => req('PUT', '/api/meta/proxy', data),
+  proxyTest: (data) => req('POST', '/api/meta/proxy/test', data || {}),
 };

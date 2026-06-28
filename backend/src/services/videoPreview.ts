@@ -62,8 +62,9 @@ export async function runVideoPreview(projectId: string): Promise<void> {
   emitToProject(projectId, 'videoPreview:progress', { step: 'Подготовка' });
 
   try {
-    const scenes = await prisma.scene.findMany({ where: { projectId }, orderBy: { order: 'asc' } });
-    if (scenes.length === 0 || scenes.some(s => !s.imagePath)) throw new Error('Не у всех сцен есть картинка');
+    const allScenes = await prisma.scene.findMany({ where: { projectId }, orderBy: { order: 'asc' } });
+    const scenes = allScenes.filter(s => s.imagePath);
+    if (scenes.length === 0) throw new Error('Нет ни одной сцены с картинкой');
 
     const hash = await computePreviewHash(projectId);
     if (project.videoPreviewHash === hash && project.videoPreviewPath && fs.existsSync(abs(project.videoPreviewPath))) {
@@ -184,6 +185,7 @@ export async function runVideoPreview(projectId: string): Promise<void> {
     const rawPath = path.join(prevDir, `raw_${stitchHash}.mp4`);
 
     if (!fs.existsSync(rawPath)) {
+      emitToProject(projectId, 'videoPreview:progress', { percent: Math.round((rendered / totalSteps) * 100), step: `Склейка ${scenes.length} клипов...` });
       for (const f of fs.readdirSync(prevDir)) {
         if (f.startsWith('raw_') && f.endsWith('.mp4')) fs.rmSync(path.join(prevDir, f), { force: true });
       }

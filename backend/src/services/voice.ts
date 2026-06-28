@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import * as voicer from '../lib/voicer.js';
-import { saveAudio } from '../lib/ffmpeg.js';
+import { saveAudio, detectSilences } from '../lib/ffmpeg.js';
 import { rel, abs, projectDir } from '../lib/paths.js';
 import { emitToProject } from '../lib/socket.js';
 
@@ -48,6 +48,14 @@ export async function generateVoicePreview(projectId: string): Promise<void> {
     const timestamps = await voicer.downloadTimestamps(taskId);
     if (timestamps && timestamps.length > 0) {
       fs.writeFileSync(path.join(dir, 'timestamps.json'), JSON.stringify(timestamps), 'utf-8');
+    }
+
+    // Детект пауз в озвучке для точной привязки границ сцен
+    try {
+      const silences = await detectSilences(audioPath, 0.2, -30);
+      fs.writeFileSync(path.join(dir, 'silences.json'), JSON.stringify(silences), 'utf-8');
+    } catch {
+      // Не критично: pipeline и фронт работают и без silences.json (fallback на пропорциональный расчёт)
     }
 
     await prisma.project.update({
@@ -114,5 +122,30 @@ export function getWordTimestamps(projectId: string, folderName: string): any[] 
     return Array.isArray(data) && data.length > 0 ? data : null;
   } catch {
     return null;
+  }
+}
+
+/** Получить найденные паузы в озвучке. Если файла нет — попробует посчитать на лету. */
+export async function getSilences(projectId: string, folderName: string): Promise<{ start: number; end: number; duration: number }[]> {
+  const voiceDir = path.join(projectDir(projectId, folderName), 'voice');
+  const silPath = path.join(voiceDir, 'silences.json');
+  if (fs.existsSync(silPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(silPath, 'utf-8'));
+      if (Array.isArray(data)) return data;
+    } catch {}
+  }
+  // Файла нет — пробуем посчитать прямо сейчас из актуального аудио (AI или кастомного)
+  const audioPath = await getAnyVoicePath(projectId);
+  if (!audioPath) return [];
+  try {
+    const silences = await detectSilences(audioPath, 0.2, -30);
+    try {
+      fs.mkdirSync(voiceDir, { recursive: true });
+      fs.writeFileSync(silPath, JSON.stringify(silences), 'utf-8');
+    } catch {}
+    return silences;
+  } catch {
+    return [];
   }
 }

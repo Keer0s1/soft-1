@@ -8,13 +8,14 @@ import os from 'node:os';
 import { prisma } from '../db.js';
 import { JOBS_DIR, env, ASPECT_SIZES } from '../env.js';
 import * as voicer from '../lib/voicer.js';
-import { audioDuration, saveAudio, renderSceneClip, stitchClips, qualityOf, applyGrading, mixAudioWithDucking, overlaySfx, overlayVideos } from '../lib/ffmpeg.js';
+import { audioDuration, saveAudio, renderSceneClip, stitchClips, qualityOf, applyGrading, mixAudioWithDucking, overlaySfx, overlayVideos, isValidVideo, detectSilences } from '../lib/ffmpeg.js';
 import { buildZoomFilter, staticFilter, pickSequence, validZoomPresets, validTransitionPresets, resolveEffects, EffectOverrides } from '../lib/effects.js';
 import { rel, abs, projectDir } from '../lib/paths.js';
 import { emitToProject } from '../lib/socket.js';
 import { writeASS, writeWordASS, writeCtaASS } from '../lib/subtitles.js';
-import { getValidVoicePath, getWordTimestamps } from './voice.js';
+import { getValidVoicePath, getWordTimestamps, getSilences } from './voice.js';
 import { computeClipHash } from '../lib/hash.js';
+import { computeSceneDurations } from '../lib/sceneTiming.js';
 import fs from 'node:fs';
 
 async function appendLog(jobId: string, msg: string) {
@@ -127,6 +128,12 @@ export async function runJob(jobId: string): Promise<void> {
         fs.writeFileSync(path.join(voiceDir, 'timestamps.json'), JSON.stringify(timestamps), 'utf-8');
       }
 
+      // Детект пауз для точной привязки границ сцен
+      try {
+        const silences = await detectSilences(audioPath, 0.2, -30);
+        fs.writeFileSync(path.join(voiceDir, 'silences.json'), JSON.stringify(silences), 'utf-8');
+      } catch {}
+
       // Сохраняем как project voice для будущих сборок
       const crypto = await import('node:crypto');
       const hash = crypto.createHash('sha256').update(`${job.project.voiceTemplateId ?? ''}:${fullText.trim()}`).digest('hex').slice(0, 16);
@@ -140,10 +147,10 @@ export async function runJob(jobId: string): Promise<void> {
     await prisma.job.update({ where: { id: jobId }, data: { audioPath: rel(audioPath) } });
     await appendLog(jobId, `Длительность аудио: ${total.toFixed(1)} с`);
 
-    // 2) Длительности: per-scene durationOverride приоритетнее пропорционального расчёта
-    const charCounts = scenes.map((s) => Math.max(s.voiceText.length, 1));
-    const totalChars = charCounts.reduce((a, b) => a + b, 0);
-    const proportionalDurations = charCounts.map((c) => (total * c) / totalChars);
+    // 2) Длительности: per-scene durationOverride приоритетнее пропорционального расчёта.
+    //    Внутренние границы сцен привязываются к серединам реальных пауз в озвучке,
+    //    чтобы картинки не «уезжали» от голоса (паузы и пунктуация не учитывались
+    //    при простом пропорциональном расчёте по символам).
 
     // Fetch original scenes to get overrides (SceneResult doesn't store them yet)
     const originalScenes = await prisma.scene.findMany({
@@ -152,10 +159,20 @@ export async function runJob(jobId: string): Promise<void> {
       select: { effectOverrides: true, durationOverride: true },
     });
 
-    const durations = scenes.map((_, i) => {
-      const override = originalScenes[i]?.durationOverride as number | null;
-      return override != null && override > 0 ? override : proportionalDurations[i];
-    });
+    const silences = await getSilences(job.projectId, job.project.folderName);
+    if (silences.length > 0) {
+      await appendLog(jobId, `Найдено пауз в озвучке: ${silences.length} (привязка границ сцен)`);
+    }
+
+    const timing = computeSceneDurations(
+      scenes.map((s, i) => ({
+        voiceText: s.voiceText,
+        durationOverride: (originalScenes[i]?.durationOverride as number | null) ?? null,
+      })),
+      total,
+      silences,
+    );
+    const durations = timing.durations;
     await Promise.all(
       scenes.map((s, i) =>
         prisma.sceneResult.update({ where: { id: s.id }, data: { durationSec: durations[i] } }),
@@ -188,7 +205,7 @@ export async function runJob(jobId: string): Promise<void> {
     fs.mkdirSync(clipsDir, { recursive: true });
 
     // Compute hashes and check cache
-    const clipInfos = scenes.map((s, i) => {
+    const clipInfos = await Promise.all(scenes.map(async (s, i) => {
       const zoomPreset = resolved.zoomSeq[i];
       const hash = computeClipHash({
         imagePath: s.imagePath!,
@@ -204,9 +221,16 @@ export async function runJob(jobId: string): Promise<void> {
         quality: p.renderQuality,
       });
       const cachedPath = path.join(clipsDir, `clip_${String(i).padStart(3, '0')}_${hash}.mp4`);
-      const cached = fs.existsSync(cachedPath);
+      let cached = fs.existsSync(cachedPath);
+      if (cached) {
+        const ok = await isValidVideo(cachedPath);
+        if (!ok) {
+          try { fs.unlinkSync(cachedPath); } catch {}
+          cached = false;
+        }
+      }
       return { hash, cachedPath, cached, zoomPreset };
-    });
+    }));
 
     const fromCache = clipInfos.filter((c) => c.cached).length;
     const toRender = clipInfos.filter((c) => !c.cached).length;

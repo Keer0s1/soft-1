@@ -1,11 +1,25 @@
 import { useRef, useState } from 'react';
 import { api } from '../api.js';
 
-// Импорт двух .txt файлов: один — речь, другой — промты. Матчинг по строкам:
-// строка N речи + строка N промта = сцена N. Пустые строки игнорируются.
+// Разбиваем на непустые строки (одна строка = одна сцена).
 const lines = (t) => t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-function FileZone({ label, hint, fileName, onText }) {
+// Конвертация File → base64 data-URI с порогом размера (для фоток).
+function fileToDataUri(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = (e) => resolve(e.target.result);
+    r.onerror = () => reject(new Error(`Не удалось прочитать ${file.name}`));
+    r.readAsDataURL(file);
+  });
+}
+
+// Натуральная сортировка по имени файла — чтобы scene_01.jpg шла раньше scene_10.jpg.
+function naturalSort(a, b) {
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function TextFileZone({ label, hint, fileName, onText }) {
   const ref = useRef(null);
   const [drag, setDrag] = useState(false);
 
@@ -34,50 +48,170 @@ function FileZone({ label, hint, fileName, onText }) {
   );
 }
 
+function ImageZone({ images, onAdd, onClear }) {
+  const ref = useRef(null);
+  const [drag, setDrag] = useState(false);
+
+  return (
+    <div
+      className={`import-dropzone import-dropzone-images${drag ? ' active' : ''}`}
+      onClick={() => ref.current?.click()}
+      onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+      onDragLeave={() => setDrag(false)}
+      onDrop={(e) => { e.preventDefault(); setDrag(false); onAdd(e.dataTransfer.files); }}
+    >
+      <span className="import-drop-icon">🖼</span>
+      <div className="import-image-info">
+        <b>Фотки сцен (опционально)</b>
+        {images.length === 0
+          ? <span className="muted small"> — перетащи или выбери (можно сразу несколько)</span>
+          : (
+            <>
+              <span className="muted small"> — {images.length} шт. ✓</span>
+              <button type="button" className="import-clear" onClick={(e) => { e.stopPropagation(); onClear(); }}>
+                очистить
+              </button>
+            </>
+          )}
+      </div>
+      <input
+        ref={ref}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => { onAdd(e.target.files); e.target.value = ''; }}
+      />
+    </div>
+  );
+}
+
 export default function ImportDialog({ projectId, onImported, onClose }) {
   const [speechText, setSpeechText] = useState('');
   const [promptsText, setPromptsText] = useState('');
   const [speechName, setSpeechName] = useState('');
   const [promptsName, setPromptsName] = useState('');
+  const [images, setImages] = useState([]); // [{ name, dataUri, sizeKb }]
   const [error, setError] = useState('');
+  const [importing, setImporting] = useState(false);
+
+  async function addImages(fileList) {
+    if (!fileList || fileList.length === 0) return;
+    const incoming = Array.from(fileList)
+      .filter((f) => f.type.startsWith('image/'))
+      .sort(naturalSort);
+    if (incoming.length === 0) return;
+
+    const tooBig = incoming.find((f) => f.size > 15 * 1024 * 1024);
+    if (tooBig) {
+      setError(`${tooBig.name} больше 15 МБ — сожми перед загрузкой`);
+      return;
+    }
+    setError('');
+    try {
+      const next = await Promise.all(
+        incoming.map(async (f) => ({
+          name: f.name,
+          dataUri: await fileToDataUri(f),
+          sizeKb: Math.round(f.size / 1024),
+        })),
+      );
+      setImages((prev) => [...prev, ...next]);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   const sLines = lines(speechText);
   const pLines = lines(promptsText);
-  const countMismatch = sLines.length > 0 && pLines.length > 0 && sLines.length !== pLines.length;
-  const ready = sLines.length > 0 && pLines.length > 0 && !countMismatch;
-  // все пары — где одной стороны нет, помечаем как ошибку
-  const maxLen = Math.max(sLines.length, pLines.length);
-  const pairs = Array.from({ length: maxLen }, (_, i) => ({
-    s: sLines[i],
-    p: pLines[i],
-    bad: sLines[i] === undefined || pLines[i] === undefined,
-  }));
+  const hasImages = images.length > 0;
+
+  // ── Режимы импорта ─────────────────────────────────────────────
+  // 1) с фотками: 1 строка речи = 1 фотка (промты опциональны)
+  // 2) без фоток: 1 строка речи = 1 строка промта (старый flow)
+  let pairs;
+  let countOk;
+  let modeNote;
+
+  if (hasImages) {
+    const max = Math.max(sLines.length, images.length);
+    pairs = Array.from({ length: max }, (_, i) => ({
+      s: sLines[i],
+      p: pLines[i],
+      img: images[i],
+      bad: sLines[i] === undefined || images[i] === undefined,
+    }));
+    countOk = sLines.length > 0 && sLines.length === images.length;
+    modeNote = `Речей: ${sLines.length} · Фоток: ${images.length}` +
+      (pLines.length ? ` · Промтов: ${pLines.length}` : '') +
+      (countOk ? ' — совпадает ✓' : ' — речь и фотки должны совпадать по количеству');
+  } else {
+    const max = Math.max(sLines.length, pLines.length);
+    pairs = Array.from({ length: max }, (_, i) => ({
+      s: sLines[i],
+      p: pLines[i],
+      img: null,
+      bad: sLines[i] === undefined || pLines[i] === undefined,
+    }));
+    countOk = sLines.length > 0 && pLines.length > 0 && sLines.length === pLines.length;
+    modeNote = `Речей: ${sLines.length} · Промтов: ${pLines.length}` +
+      (countOk ? ' — совпадает ✓' : (sLines.length || pLines.length ? ' — не совпадает' : ''));
+  }
+
+  const ready = countOk && !importing;
 
   async function doImport() {
     setError('');
+    setImporting(true);
     try {
-      const { scenes } = await api.parseFiles(projectId, speechText, promptsText);
-      onImported(scenes);
+      if (hasImages) {
+        const scenes = sLines.map((voiceText, i) => ({
+          voiceText,
+          imagePrompt: pLines[i] ?? '',
+          imageDataUri: images[i]?.dataUri,
+        }));
+        await api.replaceScenesWithImages(projectId, scenes);
+      } else {
+        const { scenes } = await api.parseFiles(projectId, speechText, promptsText);
+        await api.replaceScenes(projectId, scenes);
+      }
+      onImported?.();
     } catch (e) {
       setError(e.message);
+    } finally {
+      setImporting(false);
     }
   }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal import-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Импорт сценария (два файла)</h3>
+        <h3>Импорт сценария</h3>
         <p className="muted small" style={{ marginTop: 0 }}>
-          В каждом файле <b>1 строка = 1 сцена</b>. Строка N речи совпадёт со строкой N промта.
-          Пустые строки игнорируются.
+          <b>1 строка = 1 сцена.</b> Загрузите файл речи. Дальше на выбор:
+          приложите свои фотки <b>или</b> файл промтов для генерации.
         </p>
 
         <div className="import-cols">
-          <FileZone label="Файл речи (.txt)" hint="перетащи или выбери" fileName={speechName}
-            onText={(t, n) => { setSpeechText(t); setSpeechName(n); }} />
-          <FileZone label="Файл промтов (.txt)" hint="перетащи или выбери" fileName={promptsName}
-            onText={(t, n) => { setPromptsText(t); setPromptsName(n); }} />
+          <TextFileZone
+            label="Речь (.txt)"
+            hint="перетащи или выбери"
+            fileName={speechName}
+            onText={(t, n) => { setSpeechText(t); setSpeechName(n); }}
+          />
+          <TextFileZone
+            label={hasImages ? 'Промты (.txt, необязательно)' : 'Промты (.txt)'}
+            hint="перетащи или выбери"
+            fileName={promptsName}
+            onText={(t, n) => { setPromptsText(t); setPromptsName(n); }}
+          />
         </div>
+
+        <ImageZone
+          images={images}
+          onAdd={addImages}
+          onClear={() => setImages([])}
+        />
 
         {/* Можно и вставить текстом, если без файлов */}
         <details className="import-paste">
@@ -92,21 +226,27 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
           </div>
         </details>
 
-        {/* Счётчик и предпросмотр пар */}
-        {(sLines.length > 0 || pLines.length > 0) && (
-          <div className={`import-check${countMismatch ? ' bad' : ' ok'}`}>
-            Речей: <b>{sLines.length}</b> · Промтов: <b>{pLines.length}</b>
-            {countMismatch && ' — не совпадает! Исправь, иначе сцены съедут.'}
-            {ready && ' — совпадает ✓'}
+        {(sLines.length > 0 || pLines.length > 0 || hasImages) && (
+          <div className={`import-check${countOk ? ' ok' : ' bad'}`}>
+            {modeNote}
           </div>
         )}
-        {maxLen > 0 && (
+
+        {pairs.length > 0 && (
           <div className="import-preview">
             {pairs.map((p, i) => (
               <div key={i} className={`import-pair${p.bad ? ' bad' : ''}`}>
                 <span className="ip-num">{i + 1}</span>
                 <span className="ip-voice">🎙 {p.s ?? <em className="ip-missing">нет речи</em>}</span>
-                <span className="ip-prompt">🖼 {p.p ?? <em className="ip-missing">нет промта</em>}</span>
+                {hasImages ? (
+                  <span className="ip-image">
+                    {p.img
+                      ? <img src={p.img.dataUri} alt={p.img.name} className="ip-thumb" />
+                      : <em className="ip-missing">нет фото</em>}
+                  </span>
+                ) : (
+                  <span className="ip-prompt">🖼 {p.p ?? <em className="ip-missing">нет промта</em>}</span>
+                )}
               </div>
             ))}
           </div>
@@ -115,8 +255,12 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
         {error && <div className="error-box">{error}</div>}
 
         <div className="modal-actions">
-          <button className="ghost" onClick={onClose}>Отмена</button>
-          <button onClick={doImport} disabled={!ready}>Импортировать {ready ? `(${sLines.length})` : ''}</button>
+          <button className="ghost" onClick={onClose} disabled={importing}>Отмена</button>
+          <button onClick={doImport} disabled={!ready}>
+            {importing
+              ? 'Импортирую…'
+              : `Импортировать${countOk ? ` (${sLines.length})` : ''}`}
+          </button>
         </div>
       </div>
     </div>

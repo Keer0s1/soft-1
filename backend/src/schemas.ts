@@ -65,6 +65,16 @@ export const replaceScenesSchema = z.object({
   })).min(1).max(500),
 });
 
+/** Импорт сцен с прикреплёнными картинками (data-URI). Промт необязателен,
+ *  если фото уже есть — оно станет активным вариантом сцены. */
+export const replaceScenesWithImagesSchema = z.object({
+  scenes: z.array(z.object({
+    voiceText: z.string().max(10000).default(''),
+    imagePrompt: z.string().max(2000).default(''),
+    imageDataUri: z.string().max(20_000_000).optional(),
+  })).min(1).max(500),
+});
+
 export const createSceneSchema = z.object({
   voiceText: z.string().max(10000).optional().default(''),
   imagePrompt: z.string().max(2000).optional().default(''),

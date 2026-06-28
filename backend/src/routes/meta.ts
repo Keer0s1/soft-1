@@ -4,8 +4,9 @@ import path from 'node:path';
 import { IMAGE_PROVIDERS } from '../lib/fastgen.js';
 import * as fastgen from '../lib/fastgen.js';
 import * as voicer from '../lib/voicer.js';
+import * as proxy from '../lib/proxy.js';
 import { ASPECT_SIZES, env } from '../env.js';
-import { cached } from '../lib/cache.js';
+import { cached, invalidate } from '../lib/cache.js';
 import { ZOOM_PRESETS, TRANSITION_PRESETS } from '../lib/effects.js';
 
 export const metaRouter = Router();
@@ -27,17 +28,26 @@ metaRouter.get('/effects', (_req, res) => {
 
 // Запасные красивые названия моделей, если API недоступен (rate limit / сеть)
 const FALLBACK_MODEL_LABELS: Record<string, string> = {
-  GEM_PIX_2: 'Nano Pro',
-  IMAGEN_3_5: 'Imagen 4',
-  NARWHAL: 'Nano Banana 2',
+  'nano-banana-pro': 'Nano Banana Pro',
+  'nano-banana-2': 'Nano Banana 2',
+  'flower-image': 'Flower Image',
+  'grok-image': 'Grok Image',
+  'openai-image': 'OpenAI Image',
 };
 const FALLBACK_PROVIDER_LABELS: Record<string, string> = {
   flow: 'Flow (Google)',
-  flower: 'Flower (Nano Banana 2)',
+  flower: 'Flower (Nano Banana)',
+  grok: 'Grok',
+  openai: 'OpenAI',
 };
 
-// Провайдеры/модели картинок с человекочитаемыми именами (из /api/v5/models),
-// кешируем на 60с. Поддерживаем генерацию только flow + flower.
+// Какие операции считаем «image generation» (из /api/v6/models -> operations[])
+function isImageGen(op: string): boolean {
+  return /image_generate$/.test(op);
+}
+
+// Провайдеры/модели картинок с человекочитаемыми именами (из /api/v6/models),
+// кешируем на 60с. Поддерживаем все image-провайдеры из IMAGE_PROVIDERS.
 metaRouter.get('/providers', async (_req, res) => {
   const aspectRatios = Object.keys(ASPECT_SIZES);
   try {
@@ -51,45 +61,46 @@ metaRouter.get('/providers', async (_req, res) => {
         IMAGE_PROVIDERS[id]?.label ||
         id;
 
-      // flow: показываем модели с красивыми именами; flower: модель одна, селектор не нужен
-      const flowModels = modelList
-        .filter((m) => m.provider === 'flow' && m.media_type === 'image')
-        .map((m) => ({
-          code: m.provider_model || m.id,
-          label: m.display_name || FALLBACK_MODEL_LABELS[m.provider_model] || m.id,
+      const modelsByProvider: Record<string, any[]> = {};
+      for (const m of modelList) {
+        const ops: string[] = Array.isArray(m.operations) ? m.operations : [];
+        if (!ops.some(isImageGen)) continue;
+        const prov = String(m.provider ?? '');
+        if (!IMAGE_PROVIDERS[prov]) continue;
+        (modelsByProvider[prov] ||= []).push({
+          code: m.id,
+          label: m.display_name || FALLBACK_MODEL_LABELS[m.id] || m.id,
           default: !!m.default,
           deprecated: !!m.deprecated,
           experimental: !!m.experimental,
-        }));
+        });
+      }
 
-      return {
-        source: 'api',
-        providers: [
-          {
-            id: 'flow',
-            label: provLabel('flow'),
-            models: flowModels.length
-              ? flowModels
-              : IMAGE_PROVIDERS.flow.models.map((c) => ({ code: c, label: FALLBACK_MODEL_LABELS[c] || c })),
-          },
-          { id: 'flower', label: provLabel('flower'), models: [] },
-        ],
-        aspectRatios,
-      };
+      const providersOut = Object.keys(IMAGE_PROVIDERS).map((id) => {
+        const apiModels = modelsByProvider[id] ?? [];
+        const fallbackModels = IMAGE_PROVIDERS[id].models.map((c) => ({
+          code: c,
+          label: FALLBACK_MODEL_LABELS[c] || c,
+        }));
+        return {
+          id,
+          label: provLabel(id),
+          models: apiModels.length ? apiModels : fallbackModels,
+        };
+      });
+
+      return { source: 'api', providers: providersOut, aspectRatios };
     });
     res.json(result);
   } catch {
     // Фолбэк: красивые имена из нашей таблицы
     res.json({
       source: 'fallback',
-      providers: [
-        {
-          id: 'flow',
-          label: FALLBACK_PROVIDER_LABELS.flow,
-          models: IMAGE_PROVIDERS.flow.models.map((c) => ({ code: c, label: FALLBACK_MODEL_LABELS[c] || c })),
-        },
-        { id: 'flower', label: FALLBACK_PROVIDER_LABELS.flower, models: [] },
-      ],
+      providers: Object.keys(IMAGE_PROVIDERS).map((id) => ({
+        id,
+        label: FALLBACK_PROVIDER_LABELS[id] || IMAGE_PROVIDERS[id].label,
+        models: IMAGE_PROVIDERS[id].models.map((c) => ({ code: c, label: FALLBACK_MODEL_LABELS[c] || c })),
+      })),
       aspectRatios,
     });
   }
@@ -193,7 +204,14 @@ metaRouter.get('/luts/:file', (req, res) => {
   if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'not found' }); return; }
   res.setHeader('Content-Type', 'text/plain');
   res.setHeader('Cache-Control', 'public, max-age=86400');
-  fs.createReadStream(filePath).pipe(res);
+  const stream = fs.createReadStream(filePath);
+  stream.on('error', (err) => {
+    console.warn('LUT stream error:', err.message);
+    if (!res.headersSent) res.status(500).end();
+    else res.end();
+  });
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
 });
 
 // Доступная фоновая музыка
@@ -207,4 +225,72 @@ metaRouter.get('/music', (_req, res) => {
     path: `music/${f}`,
   }));
   res.json(tracks);
+});
+
+// ─── Прокси ─────────────────────────────────────────────────────────
+// Текущая конфигурация (пароль не отдаём — только флаг "задан" в hasPassword).
+metaRouter.get('/proxy', (_req, res) => {
+  const c = proxy.getConfig();
+  res.json({
+    enabled: c.enabled,
+    protocol: c.protocol,
+    host: c.host,
+    port: c.port,
+    username: c.username ?? '',
+    hasPassword: Boolean(c.password),
+  });
+});
+
+// Сохранить новую конфигурацию.
+// Поле password не передавать, если хочешь оставить старый (UI: оставь пустым).
+metaRouter.put('/proxy', async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const patch: any = {
+      enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      protocol: body.protocol,
+      host: body.host,
+      port: body.port != null ? Number(body.port) : undefined,
+      username: body.username,
+    };
+    // Если password не пришёл или пустая строка — оставляем старый
+    if (typeof body.password === 'string' && body.password.length > 0) {
+      patch.password = body.password;
+    }
+    const next = await proxy.saveConfig(patch);
+    // Сбрасываем кеш статусов/балансов, чтобы фронт сразу увидел свежий пинг
+    invalidate('status');
+    invalidate('balance');
+    invalidate('usage');
+    res.json({
+      enabled: next.enabled,
+      protocol: next.protocol,
+      host: next.host,
+      port: next.port,
+      username: next.username ?? '',
+      hasPassword: Boolean(next.password),
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: String(e?.message ?? e) });
+  }
+});
+
+// Проверить прокси: пингуем Voicer и fast-gen через текущий ИЛИ
+// переданный во временном виде (для теста перед сохранением).
+metaRouter.post('/proxy/test', async (req, res) => {
+  const body = req.body ?? {};
+  const override = body.host
+    ? {
+        protocol: body.protocol,
+        host: body.host,
+        port: Number(body.port),
+        username: body.username,
+        password: body.password,
+      }
+    : undefined;
+  const [vc, fg] = await Promise.all([
+    proxy.testProxy(`${env.VOICER_API_URL}/balance`, override),
+    proxy.testProxy(`${env.FASTGEN_API_URL}/api/v6/usage`, override),
+  ]);
+  res.json({ voicer: vc, fastgen: fg });
 });

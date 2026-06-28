@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { computeSceneDurations } from './sceneTiming.js';
 
-export function useTimelineState(scenes) {
+export function useTimelineState(scenes, silences = []) {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -9,25 +10,20 @@ export function useTimelineState(scenes) {
   const playheadRef = useRef(null);
   const timeRef = useRef(0);
 
-  const durations = scenes.map((s) => {
-    if (s.durationOverride && s.durationOverride > 0) return s.durationOverride;
-    return Math.max(s.voiceText?.length || 1, 1);
-  });
-  const totalChars = durations.reduce((a, b) => a + b, 0);
+  // durationOverride трактуется как АБСОЛЮТНЫЕ секунды для сцены.
+  // Сцены без override делят оставшееся аудио-время. Если есть пословные
+  // паузы (silences) — внутренние границы сцен привязываются к серединам пауз,
+  // чтобы картинки не уезжали от речи. Иначе — пропорция по длине voiceText.
+  const totalAudio = audioRef.current?.duration || 0;
 
-  const totalDuration = audioRef.current?.duration || null;
-  const sceneDurations = totalDuration
-    ? durations.map((d) => (totalDuration * d) / totalChars)
-    : durations.map((d) => (d / totalChars) * (scenes.length * 4));
-
-  const boundaries = [];
-  let acc = 0;
-  for (const d of sceneDurations) {
-    boundaries.push(acc);
-    acc += d;
-  }
-  boundaries.push(acc);
-  const computedTotal = acc;
+  const timing = computeSceneDurations(
+    scenes.map((s) => ({ voiceText: s.voiceText, durationOverride: s.durationOverride })),
+    totalAudio,
+    silences,
+  );
+  const sceneDurations = timing.durations;
+  const boundaries = timing.boundaries;
+  const computedTotal = boundaries[boundaries.length - 1] || 0;
 
   const currentSceneIndex = boundaries.findIndex((b, i) =>
     i < boundaries.length - 1 && currentTime >= b && currentTime < boundaries[i + 1]

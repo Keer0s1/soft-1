@@ -14,9 +14,9 @@ const FFPROBE = ffprobeStatic.path || 'ffprobe';
 
 const posix = (p: string) => p.split(path.sep).join('/');
 
-function run(bin: string, args: string[], errPrefix: string): Promise<string> {
+function run(bin: string, args: string[], errPrefix: string, cwd?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(bin, args);
+    const proc = spawn(bin, args, cwd ? { cwd } : undefined);
     let stdout = '';
     let stderr = '';
     proc.stdout.on('data', (d) => (stdout += d.toString()));
@@ -38,6 +38,80 @@ export async function audioDuration(file: string): Promise<number> {
     'ffprobe не смог определить длительность аудио',
   );
   return parseFloat(out.trim());
+}
+
+export interface SilenceRange {
+  start: number;
+  end: number;
+  duration: number;
+}
+
+/**
+ * Найти паузы в аудио через ffmpeg silencedetect. Используется чтобы привязать
+ * границы сцен к реальным паузам в речи, а не к пропорциональному расчёту по
+ * количеству символов.
+ *
+ * minDuration — минимальная длительность паузы в секундах (короче — игнор).
+ * noiseDb — порог тишины в дБ (-30 это мягко, -40 строже).
+ */
+export async function detectSilences(
+  file: string,
+  minDuration = 0.2,
+  noiseDb = -30,
+): Promise<SilenceRange[]> {
+  // ffmpeg silencedetect пишет в stderr строки вида:
+  //   [silencedetect @ ...] silence_start: 1.234
+  //   [silencedetect @ ...] silence_end: 2.345 | silence_duration: 1.111
+  let stderr = '';
+  await new Promise<void>((resolve) => {
+    const proc = spawn(FFMPEG, [
+      '-hide_banner', '-nostats',
+      '-i', file,
+      '-af', `silencedetect=noise=${noiseDb}dB:d=${minDuration}`,
+      '-f', 'null', '-',
+    ]);
+    proc.stderr.on('data', (d) => (stderr += d.toString()));
+    proc.on('close', () => resolve());
+    proc.on('error', () => resolve());
+  });
+
+  const ranges: SilenceRange[] = [];
+  let pendingStart: number | null = null;
+  const startRe = /silence_start:\s*(-?[\d.]+)/;
+  const endRe = /silence_end:\s*(-?[\d.]+)[\s\S]*?silence_duration:\s*([\d.]+)/;
+  for (const line of stderr.split('\n')) {
+    const ms = line.match(startRe);
+    if (ms) { pendingStart = parseFloat(ms[1]); continue; }
+    const me = line.match(endRe);
+    if (me) {
+      const end = parseFloat(me[1]);
+      const duration = parseFloat(me[2]);
+      const start = pendingStart != null ? pendingStart : Math.max(0, end - duration);
+      ranges.push({ start, end, duration });
+      pendingStart = null;
+    }
+  }
+  return ranges.filter((r) => r.duration >= minDuration);
+}
+
+/** Проверить что mp4 валидный (есть moov-атом, читается ffprobe). */
+export async function isValidVideo(file: string): Promise<boolean> {
+  if (!fs.existsSync(file)) return false;
+  try {
+    const st = fs.statSync(file);
+    if (st.size < 1024) return false;
+  } catch { return false; }
+  try {
+    await run(
+      FFPROBE,
+      ['-v', 'error', '-select_streams', 'v:0', '-show_entries',
+        'stream=codec_type', '-of', 'csv=p=0', file],
+      'invalid',
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -137,11 +211,23 @@ export interface SceneClipOpts {
 /** Отрендерить одну сцену в отдельный mp4-клип (без звука). */
 export async function renderSceneClip(o: SceneClipOpts): Promise<void> {
   const vf = `${o.vf},format=yuv420p`;
+  const tmpPath = o.outPath + '.tmp.mp4';
+  try { fs.unlinkSync(tmpPath); } catch {}
   const args = ['-y'];
   if (!o.zoom) args.push('-loop', '1', '-t', o.durationSec.toFixed(3));
   args.push('-i', o.imagePath, '-vf', vf, '-r', String(o.fps));
-  args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p', '-an', o.outPath);
-  await run(FFMPEG, args, 'ffmpeg не смог отрендерить сцену');
+  args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', tmpPath);
+  try {
+    await run(FFMPEG, args, 'ffmpeg не смог отрендерить сцену');
+    if (!(await isValidVideo(tmpPath))) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      throw new Error('Сцена отрендерилась, но файл невалидный (нет moov-атома)');
+    }
+    fs.renameSync(tmpPath, o.outPath);
+  } catch (e) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    throw e;
+  }
 }
 
 export interface StitchOpts {
@@ -173,33 +259,97 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
     return;
   }
 
-  // Цепочка xfade. Клипы отрендерены длиннее на transitionDur, чтобы перекрытия
-  // не «съедали» тайминг относительно озвучки.
+  // Цепочка xfade. При >30 сценах — разбиваем на чанки для скорости.
   const t = o.transitionDur;
+  const CHUNK = 30;
+
+  if (n <= CHUNK) {
+    await stitchChunk(o.clips, o.transitions!, t, o.audioPath, o.outPath, o.quality, o.workDir);
+  } else {
+    // Разбиваем на чанки, склеиваем каждый с xfade, потом concat
+    const chunkDir = path.join(o.workDir, '_chunks');
+    fs.mkdirSync(chunkDir, { recursive: true });
+    const chunkPaths: string[] = [];
+    for (let start = 0; start < n; start += CHUNK) {
+      const end = Math.min(start + CHUNK, n);
+      const chunkClips = o.clips.slice(start, end);
+      const chunkTrans = o.transitions!.slice(start, end - 1);
+      const chunkOut = path.join(chunkDir, `chunk_${chunkPaths.length}.mp4`);
+      await stitchChunk(chunkClips, chunkTrans, t, null, chunkOut, o.quality, chunkDir);
+      chunkPaths.push(chunkOut);
+    }
+    // Concat чанки + аудио
+    const listPath = path.join(o.workDir, 'chunks.txt');
+    fs.writeFileSync(listPath, chunkPaths.map((c) => `file '${posix(c)}'`).join('\n') + '\n');
+    await run(
+      FFMPEG,
+      ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-i', o.audioPath,
+        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
+      'ffmpeg не смог склеить чанки',
+    );
+    fs.rmSync(chunkDir, { recursive: true, force: true });
+  }
+}
+
+async function stitchChunk(
+  clips: { path: string; durationSec: number }[],
+  transitions: string[],
+  t: number,
+  audioPath: string | null,
+  outPath: string,
+  quality: QualitySettings,
+  workDir: string,
+): Promise<void> {
+  const n = clips.length;
+  if (n === 1) {
+    fs.copyFileSync(clips[0].path, outPath);
+    return;
+  }
+
+  const linksDir = path.join(workDir, '_in');
+  fs.mkdirSync(linksDir, { recursive: true });
   const inputs: string[] = [];
-  o.clips.forEach((c) => inputs.push('-i', c.path));
-  inputs.push('-i', o.audioPath);
+  for (let i = 0; i < n; i++) {
+    const ext = path.extname(clips[i].path);
+    const short = path.join(linksDir, `${i}${ext}`);
+    try { fs.unlinkSync(short); } catch {}
+    try { fs.linkSync(clips[i].path, short); } catch { fs.copyFileSync(clips[i].path, short); }
+    inputs.push('-i', short);
+  }
+  if (audioPath) {
+    const shortAudio = path.join(linksDir, `a${path.extname(audioPath)}`);
+    try { fs.unlinkSync(shortAudio); } catch {}
+    try { fs.linkSync(audioPath, shortAudio); } catch { fs.copyFileSync(audioPath, shortAudio); }
+    inputs.push('-i', shortAudio);
+  }
 
   let chain = '';
   let prev = '0:v';
-  let acc = o.clips[0].durationSec;
+  let acc = clips[0].durationSec;
   for (let i = 1; i < n; i++) {
     const off = Math.max(0, acc - t).toFixed(3);
     const outLabel = i === n - 1 ? 'vout' : `v${i}`;
-    const trans = o.transitions[i - 1] ?? 'fade';
+    const trans = transitions[i - 1] ?? 'fade';
     chain += `[${prev}][${i}:v]xfade=transition=${trans}:duration=${t.toFixed(3)}:offset=${off}[${outLabel}];`;
-    acc = acc + o.clips[i].durationSec - t;
+    acc = acc + clips[i].durationSec - t;
     prev = outLabel;
   }
   chain = chain.replace(/;$/, '');
 
+  const fcPath = path.join(workDir, 'fc.txt');
+  fs.writeFileSync(fcPath, chain, 'utf-8');
+
+  const mapArgs = audioPath
+    ? ['-map', '[vout]', '-map', `${n}:a`, '-c:a', 'aac', '-b:a', '192k', '-shortest']
+    : ['-map', '[vout]'];
+
   await run(
     FFMPEG,
-    ['-y', ...inputs, '-filter_complex', chain, '-map', '[vout]', '-map', `${n}:a`,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(o.quality.crf), '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
-    'ffmpeg не смог собрать видео с переходами',
+    ['-y', ...inputs, '-filter_complex_script', fcPath, ...mapArgs,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(quality.crf), '-pix_fmt', 'yuv420p', outPath],
+    'ffmpeg не смог собрать чанк с переходами',
   );
+  fs.rmSync(linksDir, { recursive: true, force: true });
 }
 
 // ───────────────────────── Grading (post-process) ─────────────────────────

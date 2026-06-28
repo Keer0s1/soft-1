@@ -71,7 +71,12 @@ export default function EffectsPanel({ project, effects, onPatch, sampleA, sampl
 
   return (
     <details className="panel fx-panel">
-      <summary>⚙ Тонкая настройка эффектов</summary>
+      <summary>
+        <span>Тонкая настройка</span>
+        <span className="fx-summary-meta">
+          качество: <b>{effects.qualities.find(q => q.id === project.renderQuality)?.label || project.renderQuality}</b>
+        </span>
+      </summary>
 
       <div className="fx-row">
         <label className="fx-quality">

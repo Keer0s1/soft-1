@@ -5,7 +5,8 @@ import { prisma } from '../db.js';
 import { parseTwoFiles } from '../lib/parse.js';
 import { makeFolderName } from '../lib/paths.js';
 import { env } from '../env.js';
-import { createProjectSchema, updateProjectSchema, replaceScenesSchema, parseFilesSchema } from '../schemas.js';
+import { createProjectSchema, updateProjectSchema, replaceScenesSchema, replaceScenesWithImagesSchema, parseFilesSchema } from '../schemas.js';
+import { saveUploadedImage } from '../services/images.js';
 
 export const projectsRouter = Router();
 
@@ -168,6 +169,54 @@ projectsRouter.post('/:id/parse', async (req, res) => {
   try {
     const scenes = parseTwoFiles(parsed.data.speechText, parsed.data.promptsText);
     res.json({ scenes });
+  } catch (e: any) {
+    res.status(400).json({ error: String(e?.message ?? e) });
+  }
+});
+
+// Импорт сцен сразу с прикреплёнными картинками. Каждая сцена может содержать
+// imageDataUri — тогда после создания сцены сохраняем картинку как активный вариант,
+// и сцена сразу будет имитировать статус "done" (как если бы пользователь загрузил вручную).
+projectsRouter.post('/:id/scenes/with-images', async (req, res) => {
+  const parsed = replaceScenesWithImagesSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+  const items = parsed.data.scenes;
+  try {
+    // 1. Полностью заменяем сцены проекта (как делает PUT /scenes)
+    await prisma.$transaction([
+      prisma.scene.deleteMany({ where: { projectId: req.params.id } }),
+      prisma.scene.createMany({
+        data: items.map((s, i) => ({
+          projectId: req.params.id,
+          order: i,
+          voiceText: s.voiceText,
+          imagePrompt: s.imagePrompt,
+        })),
+      }),
+      prisma.project.update({ where: { id: req.params.id }, data: { updatedAt: new Date() } }),
+    ]);
+    const created = await prisma.scene.findMany({
+      where: { projectId: req.params.id },
+      orderBy: { order: 'asc' },
+    });
+
+    // 2. Цепляем загруженные картинки на соответствующие сцены
+    for (let i = 0; i < created.length; i++) {
+      const dataUri = items[i]?.imageDataUri;
+      if (!dataUri) continue;
+      try {
+        await saveUploadedImage(created[i].id, dataUri);
+      } catch (e: any) {
+        console.warn(`upload scene ${i}: ${e?.message ?? e}`);
+      }
+    }
+
+    const final = await prisma.scene.findMany({
+      where: { projectId: req.params.id },
+      orderBy: { order: 'asc' },
+      include: { images: { orderBy: { createdAt: 'desc' }, select: { id: true, path: true, source: true, createdAt: true } } },
+    });
+    res.json(final);
   } catch (e: any) {
     res.status(400).json({ error: String(e?.message ?? e) });
   }

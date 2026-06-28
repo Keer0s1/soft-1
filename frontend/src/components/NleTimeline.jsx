@@ -146,11 +146,12 @@ export default function NleTimeline({ projectId, scenes, timeline, effects, onRe
     e.stopPropagation(); e.preventDefault();
     const startX = e.clientX;
     const origDur = sceneDurations[idx];
-    const onMove = (ev) => setResizing({ idx, dur: Math.max(0.3, origDur + (ev.clientX - startX) / pxPerSec) });
+    const MIN_DUR = 1; // секунд — чтобы handle всегда был доступен
+    const onMove = (ev) => setResizing({ idx, dur: Math.max(MIN_DUR, origDur + (ev.clientX - startX) / pxPerSec) });
     const onUp = (ev) => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      const final = Math.max(0.3, origDur + (ev.clientX - startX) / pxPerSec);
+      const final = Math.max(MIN_DUR, origDur + (ev.clientX - startX) / pxPerSec);
       setResizing(null);
       api.updateScene(projectId, scenes[idx].id, { durationOverride: Math.round(final * 10) / 10 }).then(() => onRefresh?.());
     };
@@ -243,6 +244,16 @@ export default function NleTimeline({ projectId, scenes, timeline, effects, onRe
                   title="Двойной клик — настройки эффектов">
                   {s.imagePath && <img src={`/files/${s.imagePath}`} alt="" className="nle-thumb" />}
                   <span className="nle-num">{i + 1}</span>
+                  {s.durationOverride != null && w > 40 && (
+                    <button
+                      className="nle-reset-btn"
+                      title="Вернуть стандартную длительность"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        api.updateScene(projectId, s.id, { durationOverride: null }).then(() => onRefresh?.());
+                      }}
+                    >↺</button>
+                  )}
                   {onOpenFx && w > 60 && (
                     <button className="nle-fx-btn" title="Настройки эффектов сцены"
                       onClick={(e) => { e.stopPropagation(); onOpenFx(s.id); }}>⚙</button>
@@ -336,6 +347,17 @@ export default function NleTimeline({ projectId, scenes, timeline, effects, onRe
           />
         </div>
         <button className="nle-nav-btn" onClick={() => { const m = Math.max(0, totalWidth - viewportWidth); setScrollLeft(m); scrollLeftRef.current = m; }} title="В конец">⏭</button>
+        {scenes.some((s) => s.durationOverride != null) && (
+          <button
+            className="nle-reset-all-btn"
+            title="Сбросить ручные длительности всех сцен и вернуть авто-расчёт от текста озвучки"
+            onClick={() => {
+              const ids = scenes.filter((s) => s.durationOverride != null).map((s) => s.id);
+              if (ids.length === 0) return;
+              api.batchUpdateScenes(projectId, ids, { durationOverride: null }).then(() => onRefresh?.());
+            }}
+          >↺ Сбросить длительности</button>
+        )}
         <div className="nle-zoom-ctrl">
           <button className="nle-zoom-btn" onClick={() => { const n = Math.max(10, pxPerSec * 0.7); setPxPerSec(n); pxPerSecRef.current = n; }}>−</button>
           <input

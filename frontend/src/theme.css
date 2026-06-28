@@ -1,0 +1,359 @@
+/* ============================================================
+   Runway Design Tokens
+   Источник: DESIGN.md (Runwai-design-analysis)
+   Назначение: единственный источник правды по визуалу.
+   Подключается ДО styles.css в main.jsx — токены доступны
+   во всём дереве, а styles.css постепенно мигрирует на них.
+   ============================================================ */
+
+:root {
+  /* ──────────── COLORS ──────────── */
+  /* Brand & Accent */
+  --rw-primary: #000000;        /* единственный «акцент» — чёрный pill */
+  --rw-on-primary: #ffffff;     /* текст поверх primary */
+
+  /* Text */
+  --rw-ink: #030303;            /* заголовки, основной текст */
+  --rw-ink-soft: #1a1a1a;       /* nav-links, secondary headings */
+  --rw-graphite: #404040;       /* body copy, абзацы */
+  --rw-slate: #676f7b;          /* третичный текст (slate-blue) */
+  --rw-slate-soft: #727a85;     /* small-caps на тёмном */
+  --rw-mute: #6b7280;           /* disabled / fine-print */
+  --rw-stone: #939393;          /* placeholders, footer eyebrows */
+  --rw-ash: #999999;            /* самые лёгкие подписи */
+
+  /* Surface */
+  --rw-canvas: #ffffff;         /* основной фон страницы */
+  --rw-canvas-warm: #fefefe;    /* tiles на пол-тона теплее */
+  --rw-hairline: #e7eaf0;       /* infill featured-карточек, divider-пол */
+  --rw-hairline-soft: #c9ccd1;  /* 1px column-rules, table separators */
+  --rw-surface-cool: #d0d4d4;   /* плейсхолдер media-thumbnail */
+  --rw-scrim: #1a1a1a;          /* подложка hero-photo, video stage */
+  --rw-footer: #030303;         /* footer canvas */
+
+  /* ──────────── TYPOGRAPHY ──────────── */
+  /* Family — abcNormal недоступен, используем Inter (по рекомендации DESIGN.md)
+     с поджатым трекингом на display-размерах (-1.4px на 48px). */
+  --rw-font-sans: 'Inter', 'abcNormal', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --rw-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* Type scale: size / weight / line-height / tracking */
+  --rw-display-size: 48px;
+  --rw-display-weight: 400;
+  --rw-display-lh: 1;
+  --rw-display-track: -1.4px;        /* +0.2 к спеке т.к. Inter, не abcNormal */
+
+  --rw-display-sm-size: 40px;
+  --rw-display-sm-weight: 400;
+  --rw-display-sm-lh: 1;
+  --rw-display-sm-track: -1.1px;
+
+  --rw-heading-md-size: 36px;
+  --rw-heading-md-weight: 400;
+  --rw-heading-md-lh: 1;
+  --rw-heading-md-track: -1px;
+
+  --rw-heading-sm-size: 24px;
+  --rw-heading-sm-weight: 400;
+  --rw-heading-sm-lh: 1;
+  --rw-heading-sm-track: 0;
+
+  --rw-subtitle-size: 20px;
+  --rw-subtitle-weight: 400;
+  --rw-subtitle-lh: 1;
+  --rw-subtitle-track: 0;
+
+  --rw-body-size: 16px;
+  --rw-body-weight: 400;
+  --rw-body-lh: 1.5;
+  --rw-body-track: 0;
+
+  --rw-body-strong-size: 16px;
+  --rw-body-strong-weight: 600;
+  --rw-body-strong-lh: 1.5;
+  --rw-body-strong-track: 0;
+
+  --rw-body-tight-size: 16px;
+  --rw-body-tight-weight: 400;
+  --rw-body-tight-lh: 1.3;
+  --rw-body-tight-track: -0.16px;
+
+  --rw-link-sm-size: 14px;
+  --rw-link-sm-weight: 600;
+  --rw-link-sm-lh: 1.43;
+  --rw-link-sm-track: 0;
+
+  --rw-eyebrow-size: 14px;
+  --rw-eyebrow-weight: 500;
+  --rw-eyebrow-lh: 1.43;
+  --rw-eyebrow-track: 0.35px;
+
+  --rw-meta-size: 13px;
+  --rw-meta-weight: 400;
+  --rw-meta-lh: 1.3;
+  --rw-meta-track: -0.26px;
+
+  --rw-micro-caps-size: 11px;
+  --rw-micro-caps-weight: 500;       /* Inter не поддерживает 450 */
+  --rw-micro-caps-lh: 1.3;
+  --rw-micro-caps-track: 0.2px;
+
+  --rw-button-size: 14px;
+  --rw-button-weight: 600;
+  --rw-button-lh: 1.43;
+  --rw-button-track: 0;
+
+  /* ──────────── ROUNDED ──────────── */
+  --rw-rounded-none: 0px;
+  --rw-rounded-xs: 4px;
+  --rw-rounded-sm: 6px;
+  --rw-rounded-md: 8px;
+  --rw-rounded-lg: 16px;
+  --rw-rounded-full: 9999px;
+
+  /* ──────────── SPACING (8-px grid) ──────────── */
+  --rw-space-xxs: 4px;
+  --rw-space-xs: 8px;
+  --rw-space-sm: 12px;
+  --rw-space-md: 16px;
+  --rw-space-lg: 24px;
+  --rw-space-xl: 32px;
+  --rw-space-xxl: 48px;
+  --rw-space-section: 64px;
+  --rw-space-section-lg: 96px;
+
+  /* ──────────── ELEVATION ──────────── */
+  /* DESIGN.md: «The system avoids drop shadows entirely.»
+     Глубина создаётся фотослоями и тональной заливкой, не тенями.
+     Оставляем минимум для модалок/портов — там без тени никак. */
+  --rw-elevation-flat: none;
+  --rw-elevation-modal: 0 12px 32px rgba(3, 3, 3, 0.18);
+
+  /* ──────────── COMPONENT TOKENS ────────────
+     Параметры готовых компонентов из DESIGN.md.
+     Используем как short-hand для btn/nav/card. */
+
+  /* button-primary — чёрный pill 40px */
+  --rw-btn-primary-bg: var(--rw-primary);
+  --rw-btn-primary-fg: var(--rw-on-primary);
+  --rw-btn-primary-hover-bg: var(--rw-ink-soft);
+  --rw-btn-primary-rounded: var(--rw-rounded-full);
+  --rw-btn-primary-pad-y: var(--rw-space-sm);
+  --rw-btn-primary-pad-x: var(--rw-space-lg);
+  --rw-btn-height: 40px;
+
+  /* button-primary-on-dark — инверсия для scrim-поверхностей */
+  --rw-btn-primary-on-dark-bg: var(--rw-on-primary);
+  --rw-btn-primary-on-dark-fg: var(--rw-primary);
+  --rw-btn-primary-on-dark-hover-bg: var(--rw-hairline);
+
+  /* button-ghost — обведённая pill */
+  --rw-btn-ghost-bg: var(--rw-canvas);
+  --rw-btn-ghost-fg: var(--rw-ink);
+  --rw-btn-ghost-border: var(--rw-ink);
+  --rw-btn-ghost-hover-bg: var(--rw-hairline);
+
+  /* button-text-link */
+  --rw-btn-link-fg: var(--rw-ink);
+
+  /* nav-bar */
+  --rw-nav-bg: var(--rw-canvas);
+  --rw-nav-fg: var(--rw-ink);
+  --rw-nav-link-fg: var(--rw-ink-soft);
+  --rw-nav-height: 64px;
+  --rw-nav-pad-x: var(--rw-space-lg);
+
+  /* card */
+  --rw-card-bg: var(--rw-canvas);
+  --rw-card-fg: var(--rw-ink);
+  --rw-card-pad: var(--rw-space-lg);
+  --rw-card-rounded: var(--rw-rounded-md);
+  --rw-card-featured-bg: var(--rw-hairline);
+
+  /* form-field — flat, нижняя hairline-линия */
+  --rw-input-bg: var(--rw-canvas);
+  --rw-input-fg: var(--rw-ink);
+  --rw-input-placeholder: var(--rw-stone);
+  --rw-input-border: var(--rw-hairline-soft);
+  --rw-input-border-focus: var(--rw-ink);
+  --rw-input-pad-y: var(--rw-space-sm);
+  --rw-input-pad-x: 0px;
+  --rw-input-rounded: var(--rw-rounded-none);
+
+  /* alert / banner */
+  --rw-alert-bg: var(--rw-canvas);
+  --rw-alert-fg: var(--rw-ink);
+  --rw-alert-border: var(--rw-hairline-soft);
+  --rw-alert-rounded: var(--rw-rounded-lg);
+
+  /* footer */
+  --rw-footer-bg: var(--rw-footer);
+  --rw-footer-fg: var(--rw-on-primary);
+  --rw-footer-eyebrow-fg: var(--rw-stone);
+
+  /* ──────────── MOTION ──────────── */
+  --rw-motion-fast: 0.12s;
+  --rw-motion-base: 0.18s;
+  --rw-motion-slow: 0.32s;
+  --rw-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ============================================================
+   Type utility classes — короткие миксины для компонентов.
+   Используются вместо дублирования font-size/weight/tracking.
+   ============================================================ */
+.rw-display {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-display-size);
+  font-weight: var(--rw-display-weight);
+  line-height: var(--rw-display-lh);
+  letter-spacing: var(--rw-display-track);
+}
+.rw-display-sm {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-display-sm-size);
+  font-weight: var(--rw-display-sm-weight);
+  line-height: var(--rw-display-sm-lh);
+  letter-spacing: var(--rw-display-sm-track);
+}
+.rw-heading-md {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-heading-md-size);
+  font-weight: var(--rw-heading-md-weight);
+  line-height: var(--rw-heading-md-lh);
+  letter-spacing: var(--rw-heading-md-track);
+}
+.rw-heading-sm {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-heading-sm-size);
+  font-weight: var(--rw-heading-sm-weight);
+  line-height: var(--rw-heading-sm-lh);
+  letter-spacing: var(--rw-heading-sm-track);
+}
+.rw-subtitle {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-subtitle-size);
+  font-weight: var(--rw-subtitle-weight);
+  line-height: var(--rw-subtitle-lh);
+  letter-spacing: var(--rw-subtitle-track);
+}
+.rw-body {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-body-size);
+  font-weight: var(--rw-body-weight);
+  line-height: var(--rw-body-lh);
+  letter-spacing: var(--rw-body-track);
+}
+.rw-body-strong {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-body-strong-size);
+  font-weight: var(--rw-body-strong-weight);
+  line-height: var(--rw-body-strong-lh);
+  letter-spacing: var(--rw-body-strong-track);
+}
+.rw-body-tight {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-body-tight-size);
+  font-weight: var(--rw-body-tight-weight);
+  line-height: var(--rw-body-tight-lh);
+  letter-spacing: var(--rw-body-tight-track);
+}
+.rw-link-sm {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-link-sm-size);
+  font-weight: var(--rw-link-sm-weight);
+  line-height: var(--rw-link-sm-lh);
+  letter-spacing: var(--rw-link-sm-track);
+}
+.rw-eyebrow {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-eyebrow-size);
+  font-weight: var(--rw-eyebrow-weight);
+  line-height: var(--rw-eyebrow-lh);
+  letter-spacing: var(--rw-eyebrow-track);
+  text-transform: uppercase;
+}
+.rw-meta {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-meta-size);
+  font-weight: var(--rw-meta-weight);
+  line-height: var(--rw-meta-lh);
+  letter-spacing: var(--rw-meta-track);
+}
+.rw-micro-caps {
+  font-family: var(--rw-font-sans);
+  font-size: var(--rw-micro-caps-size);
+  font-weight: var(--rw-micro-caps-weight);
+  line-height: var(--rw-micro-caps-lh);
+  letter-spacing: var(--rw-micro-caps-track);
+  text-transform: uppercase;
+}
+
+/* Базовая глобальная заливка по DESIGN.md.
+   Не трогает существующие селекторы — только html/body/heading defaults. */
+html, body {
+  background: var(--rw-canvas);
+  color: var(--rw-ink);
+  font-family: var(--rw-font-sans);
+  font-feature-settings: 'cv11', 'ss01', 'kern';
+  transition: background var(--rw-motion-base) var(--rw-easing),
+              color var(--rw-motion-base) var(--rw-easing);
+}
+
+/* ============================================================
+   DARK THEME — переопределяет базовые токены при
+   `<html data-theme="dark">`. Все компоненты ходят через
+   `--rw-*` переменные, поэтому переключение мгновенное и без
+   точечных правок селекторов.
+   ============================================================ */
+[data-theme="dark"] {
+  /* Brand & action — на тёмной поверхности primary становится
+     белым pill (по DESIGN.md `button-primary-on-dark`). */
+  --rw-primary: #f5f5f5;
+  --rw-on-primary: #0b0b0d;
+
+  /* Text — инвертируем шкалу: ink почти-белый, graphite светлее */
+  --rw-ink: #f5f5f5;
+  --rw-ink-soft: #d4d4d4;
+  --rw-graphite: #a0a0a0;
+  --rw-slate: #8b93a3;
+  --rw-slate-soft: #7a8290;
+  --rw-mute: #6b7280;
+  --rw-stone: #6b6b6b;
+  --rw-ash: #555555;
+
+  /* Surfaces — тёмные, без чистого чёрного (избегаем «дыр») */
+  --rw-canvas: #0d0e10;
+  --rw-canvas-warm: #131418;
+  --rw-hairline: #25272d;
+  --rw-hairline-soft: #34373f;
+  --rw-surface-cool: #1a1c20;
+  --rw-scrim: #050507;
+  --rw-footer: #050507;
+
+  /* Тень для модалок — на тёмном чуть гуще + лёгкая внутренняя
+     белая обводка для отрисовки края на canvas-фоне */
+  --rw-elevation-modal: 0 16px 40px rgba(0, 0, 0, 0.6);
+
+  /* Component overrides — белые pill вместо чёрных */
+  --rw-btn-primary-bg: var(--rw-primary);
+  --rw-btn-primary-fg: var(--rw-on-primary);
+  --rw-btn-primary-hover-bg: var(--rw-ink-soft);
+
+  --rw-btn-primary-on-dark-bg: var(--rw-on-primary);
+  --rw-btn-primary-on-dark-fg: var(--rw-primary);
+  --rw-btn-primary-on-dark-hover-bg: var(--rw-hairline);
+
+  --rw-btn-ghost-border: var(--rw-ink);
+  --rw-btn-ghost-hover-bg: var(--rw-hairline);
+}
+
+/* Скроллбары на тёмном */
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--rw-hairline-soft);
+}
+
+/* Тостам / модалкам / PreviewPlayer-controls и подобным элементам,
+   у которых есть `mix-blend-mode: difference`, оставим как есть —
+   blend-mode сам подбирает читаемый цвет. */
+

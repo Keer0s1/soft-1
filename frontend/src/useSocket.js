@@ -29,6 +29,9 @@ export function useSocket(projectId, handlers) {
       'job:error',
       'voice:preview:done',
       'voice:preview:error',
+      'videoPreview:done',
+      'videoPreview:error',
+      'videoPreview:progress',
     ];
 
     const listener = (event) => (data) => {

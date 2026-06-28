@@ -73,7 +73,12 @@ export async function generateSceneImage(
       activeGenerations.add(sceneId);
       let bytes: Buffer;
       try {
-        bytes = await fastgen.waitForImage(opId);
+        bytes = await fastgen.waitForImage(opId, { signal: opts.signal });
+      } catch (e) {
+        if (opts.signal?.aborted) {
+          fastgen.cancelGeneration(opId);
+        }
+        throw e;
       } finally {
         activeGenerations.delete(sceneId);
       }
@@ -91,6 +96,7 @@ export async function generateSceneImage(
       return;
     } catch (e: any) {
       lastErr = e;
+      if (opts.signal?.aborted) break;
       const is429 = e?.message?.includes('429');
       if (is429 && rateLimitRetries < 30) {
         rateLimitRetries++;
@@ -100,6 +106,15 @@ export async function generateSceneImage(
         await sleep(1500 * attempt);
       }
     }
+  }
+
+  if (opts.signal?.aborted) {
+    await prisma.scene.update({
+      where: { id: sceneId },
+      data: { imageStatus: 'none', imageError: 'Отменено' },
+    });
+    emitToProject(project.id, 'scene:image:error', { sceneId });
+    return;
   }
 
   await prisma.scene.update({

@@ -38,9 +38,10 @@ export default function EditorPage() {
   const [error, setError] = useState('');
   const [block, setBlock] = useState({ canAssemble: false, blockReason: 'Загрузка…' });
   const [vpVersion, setVpVersion] = useState(0);
+  const [silences, setSilences] = useState([]);
   const pollRef = useRef(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const timeline = useTimelineState(scenes);
+  const timeline = useTimelineState(scenes, silences);
 
   // WebSocket — мгновенные обновления вместо поллинга
   useSocket(id, {
@@ -49,11 +50,11 @@ export default function EditorPage() {
     'job:step': ({ step }) => setActiveJobStep?.(step),
     'job:done': () => { setActiveJob(null); load(); toast('Ролик собран!', 'success'); },
     'job:error': ({ error }) => { setActiveJob(null); load(); toast(error || 'Ошибка сборки', 'error'); },
-    'voice:preview:done': () => load(),
+    'voice:preview:done': () => { load(); loadSilences(); },
     'voice:preview:error': ({ error }) => { load(); toast(error || 'Ошибка озвучки', 'error'); },
     'videoPreview:done': () => { load(); setVpVersion(v => v + 1); },
     'videoPreview:error': ({ error }) => { load(); if (error) toast(error, 'error'); },
-    'videoPreview:progress': ({ percent }) => setProject(p => p ? { ...p, videoPreviewStatus: 'rendering', _vpPercent: percent || 0 } : p),
+    'videoPreview:progress': ({ percent, step }) => setProject(p => p ? { ...p, videoPreviewStatus: 'rendering', _vpPercent: percent || 0, _vpStep: step || '' } : p),
   });
 
   async function load() {
@@ -61,8 +62,15 @@ export default function EditorPage() {
     setProject(p);
     setScenes(p.scenes);
   }
+  async function loadSilences() {
+    try {
+      const list = await api.voiceSilences(id);
+      setSilences(Array.isArray(list) ? list : []);
+    } catch { setSilences([]); }
+  }
   useEffect(() => {
     load();
+    loadSilences();
     api.providers().then(setProviders).catch(() => {});
     api.voicerTemplates().then((l) => setTemplates(Array.isArray(l) ? l : [])).catch(() => setTemplates([]));
     api.effects().then(setEffects).catch(() => {});
@@ -264,156 +272,347 @@ export default function EditorPage() {
 
   const resolved = project && scenes.length ? resolveEffectsFront(scenes, project) : null;
 
+  const statusDot =
+    counts.error > 0 ? 'dot-error'
+    : counts.pending > 0 ? 'dot-pending dot-pulse'
+    : (scenes.length > 0 && counts.done === scenes.length) ? 'dot-done'
+    : 'dot-none';
+
   return (
     <div className="editor">
-      <div className="editor-head">
-        <Link to="/" className="back">← к списку</Link>
-        <input
-          className="title-input"
-          value={project.title}
-          onChange={(e) => setProject((p) => ({ ...p, title: e.target.value }))}
-          onBlur={(e) => patchSetting({ title: e.target.value })}
-        />
+      {/* ── Sticky-топбар: всегда виден ── */}
+      <div className="ed-topbar">
+        <div className="ed-topbar-left">
+          <Link to="/" className="back">← к списку</Link>
+          <input
+            className="title-input"
+            value={project.title}
+            onChange={(e) => setProject((p) => ({ ...p, title: e.target.value }))}
+            onBlur={(e) => patchSetting({ title: e.target.value })}
+          />
+        </div>
+        <div className="ed-topbar-status">
+          <span className={`dot ${statusDot}`} />
+          {scenes.length > 0
+            ? `${counts.done}/${scenes.length} готово${counts.pending > 0 ? ` · ${counts.pending} в работе` : ''}${counts.error > 0 ? ` · ${counts.error} с ошибкой` : ''}`
+            : 'нет сцен'}
+        </div>
+        <div className="ed-topbar-actions">
+          <button className="ghost small" onClick={assembleShorts} disabled={!block.canAssemble} title="Экспорт в формате 9:16 для Shorts / Reels / TikTok">
+            Shorts
+          </button>
+          <button className="primary" onClick={assemble} disabled={!block.canAssemble} title={block.canAssemble ? 'Собрать готовый ролик' : block.blockReason}>
+            Собрать ролик
+          </button>
+        </div>
       </div>
 
       {(generating || counts.pending > 0) && (
         <div className="gen-progress-bar">
           <div className="gen-progress-fill" style={{ width: `${scenes.length ? (counts.done / scenes.length) * 100 : 0}%` }} />
           <span className="gen-progress-text">
-            🖼 {counts.done}/{scenes.length} готово · {counts.pending} генерится
+            {counts.done}/{scenes.length} готово · {counts.pending} генерится
           </span>
         </div>
       )}
 
-      {/* Настройки */}
-      <div className="panel settings">
-        <label>
-          Провайдер картинок
-          <select value={project.provider} onChange={(e) => patchSetting({ provider: e.target.value, model: null })}>
-            {providers.providers.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-        </label>
-        {providerInfo?.models?.length > 0 && (
-          <label>
-            Модель
-            <select
-              value={project.model ?? providerInfo.models[0].code}
-              onChange={(e) => patchSetting({ model: e.target.value })}
-            >
-              {providerInfo.models.map((m) => (
-                <option key={m.code} value={m.code}>
-                  {m.label}{m.default ? ' ★' : ''}{m.experimental ? ' (beta)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label>
-          Формат
-          <select value={project.aspectRatio} onChange={(e) => patchSetting({ aspectRatio: e.target.value })}>
-            {providers.aspectRatios.map((a) => (
-              <option key={a} value={a}>{a}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Голос (шаблон Voicer)
-          {templates === null ? (
-            <select disabled><option>загрузка…</option></select>
-          ) : (
-            <select value={project.voiceTemplateId ?? ''} onChange={(e) => patchSetting({ voiceTemplateId: e.target.value || null })}>
-              <option value="">Голос по умолчанию</option>
-              {templates.map((t) => (
-                <option key={t.uuid} value={t.uuid}>{t.name || t.uuid.slice(0, 8)}</option>
-              ))}
-            </select>
-          )}
-        </label>
-      </div>
-
-      {/* Quick effects toggles */}
-      <div className="panel quick-fx">
-        <label className="qfx-toggle">
-          <input type="checkbox" checked={project.zoomEnabled} onChange={(e) => patchSetting({ zoomEnabled: e.target.checked })} />
-          Зум
-        </label>
-        <label className="qfx-toggle">
-          <input type="checkbox" checked={project.transitionEnabled} onChange={(e) => patchSetting({ transitionEnabled: e.target.checked })} />
-          Переходы
-        </label>
-        <label className="qfx-toggle">
-          <input type="checkbox" checked={project.subtitlesEnabled} onChange={(e) => patchSetting({ subtitlesEnabled: e.target.checked })} />
-          Субтитры
-        </label>
-        <label className="qfx-quality">
-          <select value={project.renderQuality} onChange={(e) => patchSetting({ renderQuality: e.target.value })}>
-            {(effects?.qualities || []).map((q) => (
-              <option key={q.id} value={q.id}>{q.label}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {/* Тонкая настройка (collapsed) */}
-      <EffectsPanel
-        project={project}
-        effects={effects}
-        onPatch={patchSetting}
-        sampleA={withImg[0] ? `/files/${withImg[0].imagePath}` : undefined}
-        sampleB={withImg[1] ? `/files/${withImg[1].imagePath}` : undefined}
-        luts={luts}
-        musicList={musicList}
-        scenes={scenes}
-        projectId={id}
-        onMusicUploaded={async (dataUri) => {
-          const r = await api.uploadMusic(id, dataUri);
-          if (r?.path) patchSetting({ bgMusicPath: r.path });
-        }}
-      />
-
-      {/* ─── ЭТАП 2: Сценарий + картинки ─── */}
-      <div className="scenes-head">
-        <h2>Сцены <span className="muted small">({scenes.length})</span></h2>
-        <button className="ghost" onClick={() => setShowImport(true)}>📋 Импорт из текста</button>
-      </div>
-
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={scenes.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-          <div className="scenes">
-            {scenes.map((s, i) => (
-              <SceneCard
-                key={s.id}
-                projectId={id}
-                scene={s}
-                index={i}
-                total={scenes.length}
-                onMove={(dir) => moveScene(i, dir)}
-                onDelete={() => removeScene(s.id)}
-                onChanged={() => markPending(s.id)}
-                onRefresh={load}
-                effects={effects}
-              />
-            ))}
+      {/* ── Двухколоночная сетка ── */}
+      <div className="ed-grid">
+        <div className="ed-main">
+          {/* ── 01 Настройки ─────────── */}
+          <div className="stage">
+            <span className="stage-num">01</span>
+            <h2 className="stage-title">Настройки</h2>
+            <span className="stage-line" />
           </div>
-        </SortableContext>
-      </DndContext>
 
-      <div className="scenes-actions">
-        <button className="ghost" onClick={addScene}>+ Сцена</button>
-        <div className="spacer" />
-        {(counts.error > 0 || counts.none > 0) && (
-          <button className="ghost danger" onClick={() => setShowErrors(true)}>
-            🔴 Не готово ({counts.error + counts.none})
-          </button>
-        )}
-        <button className="ghost" onClick={generateAll} disabled={!scenes.length || generating}>
-          🖼 Сгенерировать картинки
-        </button>
-        <button className="cancel-gen-btn" onClick={cancelGeneration} disabled={!generating}>
-          ✕ Отменить генерацию
-        </button>
+          <div className="panel settings">
+            <label>
+              Провайдер картинок
+              <select value={project.provider} onChange={(e) => patchSetting({ provider: e.target.value, model: null })}>
+                {providers.providers.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+            {providerInfo?.models?.length > 0 && (
+              <label>
+                Модель
+                <select
+                  value={project.model ?? providerInfo.models[0].code}
+                  onChange={(e) => patchSetting({ model: e.target.value })}
+                >
+                  {providerInfo.models.map((m) => (
+                    <option key={m.code} value={m.code}>
+                      {m.label}{m.default ? ' ★' : ''}{m.experimental ? ' (beta)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label>
+              Формат
+              <select value={project.aspectRatio} onChange={(e) => patchSetting({ aspectRatio: e.target.value })}>
+                {providers.aspectRatios.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Голос (шаблон Voicer)
+              {templates === null ? (
+                <select disabled><option>загрузка…</option></select>
+              ) : (
+                <select value={project.voiceTemplateId ?? ''} onChange={(e) => patchSetting({ voiceTemplateId: e.target.value || null })}>
+                  <option value="">Голос по умолчанию</option>
+                  {templates.map((t) => (
+                    <option key={t.uuid} value={t.uuid}>{t.name || t.uuid.slice(0, 8)}</option>
+                  ))}
+                </select>
+              )}
+            </label>
+          </div>
+
+          {/* ── 02 Сцены ─────────── */}
+          <div className="stage">
+            <span className="stage-num">02</span>
+            <h2 className="stage-title">Сцены</h2>
+            <span className="stage-meta">{scenes.length}</span>
+            <span className="stage-line" />
+            <div className="stage-actions">
+              <button className="ghost small" onClick={() => setShowImport(true)} title="Импорт сценария из текста">
+                Импорт
+              </button>
+              <button className="ghost small" onClick={addScene} title="Добавить пустую сцену">
+                + Сцена
+              </button>
+              {(counts.error > 0 || counts.none > 0) && (
+                <button className="ghost small danger" onClick={() => setShowErrors(true)}>
+                  Не готово ({counts.error + counts.none})
+                </button>
+              )}
+              {generating ? (
+                <button className="cancel-gen-btn" onClick={cancelGeneration}>
+                  Отменить
+                </button>
+              ) : (
+                <button className="primary small" onClick={generateAll} disabled={!scenes.length}>
+                  Сгенерировать всё
+                </button>
+              )}
+            </div>
+          </div>
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={scenes.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+              <div className="scenes">
+                {scenes.map((s, i) => (
+                  <SceneCard
+                    key={s.id}
+                    projectId={id}
+                    scene={s}
+                    index={i}
+                    total={scenes.length}
+                    onMove={(dir) => moveScene(i, dir)}
+                    onDelete={() => removeScene(s.id)}
+                    onChanged={() => markPending(s.id)}
+                    onRefresh={load}
+                    effects={effects}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+
+          {/* ── 03 Эффекты ─────────── */}
+          <div className="stage">
+            <span className="stage-num">03</span>
+            <h2 className="stage-title">Эффекты</h2>
+            <span className="stage-line" />
+            <div className="stage-actions">
+              <label className="qfx-toggle">
+                <input type="checkbox" checked={project.zoomEnabled} onChange={(e) => patchSetting({ zoomEnabled: e.target.checked })} />
+                Зум
+              </label>
+              <label className="qfx-toggle">
+                <input type="checkbox" checked={project.transitionEnabled} onChange={(e) => patchSetting({ transitionEnabled: e.target.checked })} />
+                Переходы
+              </label>
+              <label className="qfx-toggle">
+                <input type="checkbox" checked={project.subtitlesEnabled} onChange={(e) => patchSetting({ subtitlesEnabled: e.target.checked })} />
+                Субтитры
+              </label>
+            </div>
+          </div>
+
+          <EffectsPanel
+            project={project}
+            effects={effects}
+            onPatch={patchSetting}
+            sampleA={withImg[0] ? `/files/${withImg[0].imagePath}` : undefined}
+            sampleB={withImg[1] ? `/files/${withImg[1].imagePath}` : undefined}
+            luts={luts}
+            musicList={musicList}
+            scenes={scenes}
+            projectId={id}
+            onMusicUploaded={async (dataUri) => {
+              const r = await api.uploadMusic(id, dataUri);
+              if (r?.path) patchSetting({ bgMusicPath: r.path });
+            }}
+          />
+
+          {/* ── 04 Озвучка и сборка ─────────── */}
+          {scenes.length > 0 && (
+            <>
+              <div className="stage">
+                <span className="stage-num">04</span>
+                <h2 className="stage-title">Озвучка и сборка</h2>
+                <span className="stage-line" />
+              </div>
+
+              <div className="panel assemble">
+                <div className="assemble-summary">
+                  <span className="chip"><span className="dot dot-done" /> готово {counts.done}/{scenes.length}</span>
+                  {counts.pending > 0 && <span className="chip"><span className="dot dot-pending dot-pulse" /> генерится {counts.pending}</span>}
+                  {counts.error > 0 && <span className="chip"><span className="dot dot-error" /> ошибок {counts.error}</span>}
+                  {counts.none > 0 && <span className="chip"><span className="dot dot-none" /> без фото {counts.none}</span>}
+                </div>
+                <div className="assemble-actions">
+                  <button className="ghost" onClick={previewVoice} disabled={project.voicePreviewStatus === 'pending'}>
+                    {project.voicePreviewStatus === 'pending' ? 'Озвучиваю…' : 'Озвучить'}
+                  </button>
+                  <button className="ghost" onClick={uploadVoice}>
+                    Своя озвучка
+                  </button>
+                  {project.customVoicePath && (
+                    <button className="ghost small danger" onClick={removeCustomVoice} title="Убрать свою озвучку, вернуться к AI">
+                      убрать свою
+                    </button>
+                  )}
+                  <button className="primary" onClick={assemble} disabled={!block.canAssemble}>
+                    Собрать ролик
+                  </button>
+                  <button className="ghost" onClick={assembleShorts} disabled={!block.canAssemble} title="Экспорт в формате 9:16">
+                    Shorts
+                  </button>
+                </div>
+                {project.customVoicePath && (
+                  <div className="muted small">Используется своя озвучка (не AI)</div>
+                )}
+                {!project.customVoicePath && project.voicePreviewStatus === 'done' && (
+                  <div className="muted small">Озвучка готова — при сборке не будет тратить лимиты</div>
+                )}
+                {!block.canAssemble && block.blockReason && (
+                  <div className="muted small right">{block.blockReason}</div>
+                )}
+                {project.voicePreviewStatus === 'done' && project.voicePreviewPath && (
+                  <audio className="voice-preview" src={`/files/${project.voicePreviewPath}`} controls />
+                )}
+                {project.voicePreviewStatus === 'error' && (
+                  <div className="error-box small">{project.voicePreviewError}</div>
+                )}
+                {project.folderPath && (
+                  <div className="muted small folder-hint" title="Папка этого ролика на диске">
+                    Файлы на диске: <code>{project.folderPath}</code>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {error && <div className="error-box">{error}</div>}
+
+          {/* Активная сборка */}
+          {activeJob && (
+            <>
+              <h2>Сборка</h2>
+              <JobProgress jobId={activeJob} onDone={() => load()} />
+            </>
+          )}
+
+          {/* История */}
+          {project.jobs?.length > 0 && (
+            <>
+              <div className="stage">
+                <span className="stage-num">—</span>
+                <h2 className="stage-title">История</h2>
+                <span className="stage-line" />
+              </div>
+              <div className="history">
+                {project.jobs.map((j) => <HistoryRow key={j.id} job={j} />)}
+              </div>
+            </>
+          )}
+
+          {/* Встроенный видеоплеер для последнего готового ролика */}
+          {(() => {
+            const lastDone = project.jobs?.find((j) => j.status === 'done' && j.outputPath);
+            if (!lastDone) return null;
+            return (
+              <div className="panel" style={{ marginTop: 16 }}>
+                <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Последний ролик</h3>
+                <video
+                  src={`/files/${lastDone.outputPath}`}
+                  controls
+                  style={{ width: '100%', borderRadius: 10, background: '#000' }}
+                />
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* ── Правая колонка: превью + таймлайн ── */}
+        <aside className="ed-side">
+          <PreviewPlayer scenes={scenes} timeline={timeline} voicePreviewPath={project?.voicePreviewPath} project={project} onPatch={patchSetting} videoPreviewPath={project?.videoPreviewPath} videoPreviewStatus={project?.videoPreviewStatus} onRenderPreview={renderVideoPreview} vpPercent={project?._vpPercent || 0} vpVersion={vpVersion} vpStep={project?._vpStep || ''} />
+          <NleTimeline projectId={id} scenes={scenes} timeline={timeline} effects={effects} onRefresh={load} project={project} onOpenFx={(sceneId) => setFxSceneId(sceneId)} fxSceneId={fxSceneId} />
+
+          {fxSceneId && scenes.find(s => s.id === fxSceneId) && (
+            <PreviewFxPanel
+              scenes={scenes}
+              currentIndex={scenes.findIndex(s => s.id === fxSceneId)}
+              project={project}
+              effects={effects}
+              onClose={() => setFxSceneId(null)}
+              onPatchProject={patchSetting}
+              onPatchScene={(sceneId, overrides) => {
+                api.updateScene(id, sceneId, { effectOverrides: overrides }).then(() => {
+                  setScenes(ss => ss.map(s => s.id === sceneId ? { ...s, effectOverrides: overrides } : s));
+                }).catch(() => {});
+              }}
+              onJumpToScene={(idx) => {
+                const t = (timeline.boundaries?.[idx] ?? 0) + 0.05;
+                timeline.seek(t);
+                setFxSceneId(scenes[idx]?.id || null);
+              }}
+              onRenderPreview={renderVideoPreview}
+            />
+          )}
+          <CtaTrack projectId={id} timeline={timeline} onChanged={refreshStatus} />
+          <OverlayTrack projectId={id} timeline={timeline} onChanged={refreshStatus} />
+
+          {/* Дублёр сборки — внизу боковой колонки, под оверлеями */}
+          {scenes.length > 0 && (
+            <div className="side-build">
+              <div className="side-build-stats">
+                <span className="chip"><span className="dot dot-done" />{counts.done}/{scenes.length}</span>
+                {counts.pending > 0 && <span className="chip"><span className="dot dot-pending dot-pulse" />{counts.pending} в работе</span>}
+                {counts.error > 0 && <span className="chip"><span className="dot dot-error" />{counts.error} ошибок</span>}
+                {counts.none > 0 && <span className="chip"><span className="dot dot-none" />{counts.none} без фото</span>}
+              </div>
+              <div className="side-build-actions">
+                <button className="ghost small" onClick={assembleShorts} disabled={!block.canAssemble} title="Экспорт 9:16">
+                  Shorts
+                </button>
+                <button className="primary" onClick={assemble} disabled={!block.canAssemble} title={block.canAssemble ? 'Собрать готовый ролик' : block.blockReason}>
+                  Собрать ролик
+                </button>
+              </div>
+              {!block.canAssemble && block.blockReason && (
+                <div className="muted small side-build-hint">{block.blockReason}</div>
+              )}
+            </div>
+          )}
+        </aside>
       </div>
 
       {showErrors && (
@@ -429,133 +628,18 @@ export default function EditorPage() {
               ))}
             </div>
             <button className="retry-errors-btn" onClick={retryErrors}>
-              🔄 Перегенерировать все ошибки
+              Перегенерировать все ошибки
             </button>
             <button className="ghost small" onClick={() => setShowErrors(false)} style={{ marginTop: 8 }}>Закрыть</button>
           </div>
         </div>
       )}
 
-      {/* ─── ЭТАП 3: Превью ─── */}
-      <PreviewPlayer scenes={scenes} timeline={timeline} voicePreviewPath={project?.voicePreviewPath} project={project} onPatch={patchSetting} videoPreviewPath={project?.videoPreviewPath} videoPreviewStatus={project?.videoPreviewStatus} onRenderPreview={renderVideoPreview} vpPercent={project?._vpPercent || 0} vpVersion={vpVersion} />
-      <NleTimeline projectId={id} scenes={scenes} timeline={timeline} effects={effects} onRefresh={load} project={project} onOpenFx={(sceneId) => setFxSceneId(sceneId)} fxSceneId={fxSceneId} />
-      {fxSceneId && scenes.find(s => s.id === fxSceneId) && (
-        <PreviewFxPanel
-          scenes={scenes}
-          currentIndex={scenes.findIndex(s => s.id === fxSceneId)}
-          project={project}
-          effects={effects}
-          onClose={() => setFxSceneId(null)}
-          onPatchProject={patchSetting}
-          onPatchScene={(sceneId, overrides) => {
-            api.updateScene(id, sceneId, { effectOverrides: overrides }).then(() => {
-              setScenes(ss => ss.map(s => s.id === sceneId ? { ...s, effectOverrides: overrides } : s));
-            }).catch(() => {});
-          }}
-          onJumpToScene={(idx) => {
-            const t = (timeline.boundaries?.[idx] ?? 0) + 0.05;
-            timeline.seek(t);
-            setFxSceneId(scenes[idx]?.id || null);
-          }}
-          onRenderPreview={renderVideoPreview}
-        />
-      )}
-      <CtaTrack projectId={id} timeline={timeline} onChanged={refreshStatus} />
-      <OverlayTrack projectId={id} timeline={timeline} onChanged={refreshStatus} />
-
-      {/* ─── ЭТАП 4: Озвучка + сборка ─── */}
-      {scenes.length > 0 && (
-        <div className="panel assemble">
-          <div className="assemble-summary">
-            <span className="chip badge-done">🟢 готово {counts.done}/{scenes.length}</span>
-            {counts.pending > 0 && <span className="chip badge-pending">🟡 генерится {counts.pending}</span>}
-            {counts.error > 0 && <span className="chip badge-error">🔴 ошибок {counts.error}</span>}
-            {counts.none > 0 && <span className="chip badge-none">⚪ без фото {counts.none}</span>}
-          </div>
-          <div className="assemble-actions">
-            <button className="ghost" onClick={previewVoice} disabled={project.voicePreviewStatus === 'pending'}>
-              {project.voicePreviewStatus === 'pending' ? '🎙 озвучиваю…' : '🎙 Озвучить'}
-            </button>
-            <button className="ghost" onClick={uploadVoice}>
-              ⬆ Своя озвучка
-            </button>
-            {project.customVoicePath && (
-              <button className="ghost small danger" onClick={removeCustomVoice} title="Убрать свою озвучку, вернуться к AI">
-                ✕ убрать свою
-              </button>
-            )}
-            <button className="primary" onClick={assemble} disabled={!block.canAssemble}>
-              ▶ Собрать ролик
-            </button>
-            <button className="ghost" onClick={assembleShorts} disabled={!block.canAssemble} title="Экспорт в формате 9:16 для YouTube Shorts / Reels / TikTok">
-              📱 Shorts
-            </button>
-          </div>
-          {project.customVoicePath && (
-            <div className="muted small">📎 Используется своя озвучка (не AI)</div>
-          )}
-          {!project.customVoicePath && project.voicePreviewStatus === 'done' && (
-            <div className="muted small">✓ Озвучка готова — при сборке не будет тратить лимиты</div>
-          )}
-          {!block.canAssemble && block.blockReason && (
-            <div className="muted small right">⚠️ {block.blockReason}</div>
-          )}
-          {project.voicePreviewStatus === 'done' && project.voicePreviewPath && (
-            <audio className="voice-preview" src={`/files/${project.voicePreviewPath}`} controls />
-          )}
-          {project.voicePreviewStatus === 'error' && (
-            <div className="error-box small">{project.voicePreviewError}</div>
-          )}
-          {project.folderPath && (
-            <div className="muted small folder-hint" title="Папка этого ролика на диске (картинки, озвучка, готовое видео)">
-              📁 Файлы на диске: <code>{project.folderPath}</code>
-            </div>
-          )}
-        </div>
-      )}
-
-      {error && <div className="error-box">{error}</div>}
-
-      {/* Активная сборка */}
-      {activeJob && (
-        <>
-          <h2>Сборка</h2>
-          <JobProgress jobId={activeJob} onDone={() => load()} />
-        </>
-      )}
-
-      {/* История */}
-      {project.jobs?.length > 0 && (
-        <>
-          <h2>История</h2>
-          <div className="history">
-            {project.jobs.map((j) => <HistoryRow key={j.id} job={j} />)}
-          </div>
-        </>
-      )}
-
-      {/* Встроенный видеоплеер для последнего готового ролика */}
-      {(() => {
-        const lastDone = project.jobs?.find((j) => j.status === 'done' && j.outputPath);
-        if (!lastDone) return null;
-        return (
-          <div className="panel" style={{ marginTop: 16 }}>
-            <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Последний ролик</h3>
-            <video
-              src={`/files/${lastDone.outputPath}`}
-              controls
-              style={{ width: '100%', borderRadius: 10, background: '#000' }}
-            />
-          </div>
-        );
-      })()}
-
       {showImport && (
         <ImportDialog
           projectId={id}
           onClose={() => setShowImport(false)}
-          onImported={async (imported) => {
-            await api.replaceScenes(id, imported);
+          onImported={async () => {
             setShowImport(false);
             await load();
           }}

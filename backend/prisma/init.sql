@@ -223,6 +223,15 @@ CREATE TABLE "Overlay" (
     CONSTRAINT "Overlay_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "Setting" (
+    "key" TEXT NOT NULL,
+    "value" JSONB NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Setting_pkey" PRIMARY KEY ("key")
+);
+
 -- CreateIndex
 CREATE INDEX "Scene_projectId_order_idx" ON "Scene"("projectId", "order");
 

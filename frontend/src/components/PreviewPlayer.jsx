@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { api } from '../api.js';
 import { resolveEffectsFront } from '../resolveEffects.js';
 import SubtitlesPanel from './SubtitlesPanel.jsx';
+import Icon from './Icon.jsx';
 
 const ZOOM_CSS = {
   in: { from: 'scale(1)', to: 'scale(1.12)' },
@@ -31,7 +32,7 @@ const TRANSITION_CSS = {
 
 const SUB_FONTS = { modern: 'Arial, sans-serif', classic: 'Times New Roman, serif', bold: 'Impact, sans-serif', minimal: 'Arial, sans-serif' };
 
-export default function PreviewPlayer({ scenes, timeline, voicePreviewPath, project, onPatch, videoPreviewPath, videoPreviewStatus, onRenderPreview, vpPercent, vpVersion }) {
+export default function PreviewPlayer({ scenes, timeline, voicePreviewPath, project, onPatch, videoPreviewPath, videoPreviewStatus, onRenderPreview, vpPercent, vpVersion, vpStep }) {
   const { currentTime, isPlaying, currentSceneIndex, computedTotal, sceneDurations, play, pause, seek, audioRef } = timeline;
   const [prevIdx, setPrevIdx] = useState(-1);
   const [fading, setFading] = useState(false);
@@ -260,7 +261,7 @@ export default function PreviewPlayer({ scenes, timeline, voicePreviewPath, proj
             <div className="pp-render-overlay-bar">
               <div className={`pp-render-overlay-fill${vpPercent > 0 ? '' : ' pp-render-fill-anim'}`} style={{ width: vpPercent > 0 ? `${vpPercent}%` : '100%' }} />
             </div>
-            <div className="pp-render-overlay-text">{vpPercent > 0 ? `Рендер: ${vpPercent}%` : 'Рендерю превью...'}</div>
+            <div className="pp-render-overlay-text">{vpStep || (vpPercent > 0 ? `Рендер: ${vpPercent}%` : 'Рендерю превью...')}</div>
           </div>
         )}
         {project?.vignetteEnabled && !hasVideoPreview && <div className="pp-vignette" style={{ opacity: project.vignetteIntensity ?? 0.5 }} />}
@@ -314,24 +315,34 @@ export default function PreviewPlayer({ scenes, timeline, voicePreviewPath, proj
         })}
       </div>
       <div className="pp-controls">
-        <button className="pp-btn" onClick={isPlaying ? pause : play}>{isPlaying ? '⏸' : '▶'}</button>
+        <button className="pp-btn" onClick={isPlaying ? pause : play} title={isPlaying ? 'Пауза' : 'Воспроизвести'}>
+          <Icon name={isPlaying ? 'pause' : 'play'} size={16} />
+        </button>
         <div className="pp-progress" ref={progressRef} onMouseDown={onProgressDown}>
           <div className="pp-progress-fill" style={{ width: `${progress}%` }} />
           <div className="pp-progress-thumb" style={{ left: `${progress}%` }} />
         </div>
         <span className="pp-time">{fmt(currentTime)} / {fmt(computedTotal)}</span>
         {onRenderPreview && (
-          <button className={`pp-btn pp-render-btn${isRendering ? ' pp-rendering' : ''}`} onClick={onRenderPreview} disabled={isRendering} title="Обновить превью">
-            {isRendering ? '⏳' : '🔄'}
+          <button className={`pp-btn pp-prerender-btn${isRendering ? ' pp-rendering' : ''}`} onClick={() => { onRenderPreview(); setUseVideoPreview(true); }} disabled={isRendering} title="Собрать превью (как будет на финале)">
+            {isRendering ? `${vpPercent > 0 ? vpPercent + '%' : '...'}` : 'Пререндер'}
           </button>
         )}
         {videoPreviewPath && (
-          <button className={`pp-btn pp-mode-btn${useVideoPreview ? ' pp-mode-active' : ''}`} onClick={() => setUseVideoPreview(v => !v)} title={useVideoPreview ? 'Переключить на CSS-превью' : 'Переключить на видео-превью'}>
+          <button className={`pp-btn pp-mode-btn${useVideoPreview ? ' pp-mode-active' : ''}`} onClick={() => setUseVideoPreview(v => !v)} title={useVideoPreview ? 'Видео-превью (как финал) — нажми для CSS' : 'CSS-превью — нажми для видео'}>
             {useVideoPreview ? 'V' : 'C'}
           </button>
         )}
-        {project?.subtitlesEnabled && onPatch && (
-          <button className={`pp-btn pp-cc-btn${showSubSettings ? ' pp-cc-active' : ''}`} onClick={() => setShowSubSettings(v => !v)} title="Настройки субтитров">CC</button>
+        {onPatch && (
+          <button
+            className={`pp-btn pp-cc-btn${showSubSettings ? ' pp-cc-active' : ''}${project?.subtitlesEnabled ? ' pp-cc-on' : ''}`}
+            onClick={(e) => {
+              if (e.shiftKey) { setShowSubSettings(v => !v); return; }
+              onPatch({ subtitlesEnabled: !project?.subtitlesEnabled });
+            }}
+            onContextMenu={(e) => { e.preventDefault(); setShowSubSettings(v => !v); }}
+            title={`${project?.subtitlesEnabled ? 'Выключить субтитры' : 'Включить субтитры'} · правый клик / Shift+клик — настройки`}
+          >CC</button>
         )}
       </div>
       {showSubSettings && onPatch && <SubtitlesPanel project={project} onPatch={onPatch} />}

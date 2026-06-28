@@ -3,6 +3,7 @@
 // Статусы: waiting -> processing -> ending -> ending_processed; error / error_handled.
 
 import { env } from '../env.js';
+import { proxyFetch } from './proxy.js';
 
 export class VoicerError extends Error {}
 
@@ -27,7 +28,7 @@ export interface VoiceTemplate {
 
 export async function getBalance(): Promise<any> {
   ensureConfigured();
-  const r = await fetch(`${env.VOICER_API_URL}/balance`, { headers: headers() });
+  const r = await proxyFetch(`${env.VOICER_API_URL}/balance`, { headers: headers() });
   if (!r.ok) throw new VoicerError(`Voicer /balance: ${r.status}`);
   return r.json();
 }
@@ -36,7 +37,7 @@ export async function getBalance(): Promise<any> {
 export async function ping(): Promise<{ ok: boolean; latencyMs: number; status?: number }> {
   const t0 = Date.now();
   try {
-    const r = await fetch(`${env.VOICER_API_URL}/balance`, { headers: headers() });
+    const r = await proxyFetch(`${env.VOICER_API_URL}/balance`, { headers: headers() });
     return { ok: r.ok, latencyMs: Date.now() - t0, status: r.status };
   } catch {
     return { ok: false, latencyMs: Date.now() - t0 };
@@ -45,7 +46,7 @@ export async function ping(): Promise<{ ok: boolean; latencyMs: number; status?:
 
 export async function getTemplates(): Promise<any> {
   ensureConfigured();
-  const r = await fetch(`${env.VOICER_API_URL}/templates`, { headers: headers() });
+  const r = await proxyFetch(`${env.VOICER_API_URL}/templates`, { headers: headers() });
   if (!r.ok) throw new VoicerError(`Voicer /templates: ${r.status}`);
   return r.json();
 }
@@ -57,7 +58,7 @@ export async function createTask(text: string, voice?: VoiceTemplate): Promise<n
   if (voice?.template_uuid) body.template_uuid = voice.template_uuid;
   else if (voice?.template) body.template = voice.template;
 
-  const r = await fetch(`${env.VOICER_API_URL}/tasks`, {
+  const r = await proxyFetch(`${env.VOICER_API_URL}/tasks`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
@@ -76,7 +77,7 @@ export async function createTask(text: string, voice?: VoiceTemplate): Promise<n
 
 export async function getStatus(taskId: number): Promise<string> {
   ensureConfigured();
-  const r = await fetch(`${env.VOICER_API_URL}/tasks/${taskId}/status`, { headers: headers() });
+  const r = await proxyFetch(`${env.VOICER_API_URL}/tasks/${taskId}/status`, { headers: headers() });
   if (!r.ok) throw new VoicerError(`Voicer /status: ${r.status}`);
   const data: any = await r.json();
   if (!data.status) throw new VoicerError(`Voicer: нет статуса в ответе: ${JSON.stringify(data)}`);
@@ -109,7 +110,7 @@ export async function waitUntilReady(
 /** Скачать результат (MP3, либо ZIP с чанками). Возвращает сырые байты. */
 export async function downloadResult(taskId: number): Promise<Buffer> {
   ensureConfigured();
-  const r = await fetch(`${env.VOICER_API_URL}/tasks/${taskId}/result`, { headers: headers() });
+  const r = await proxyFetch(`${env.VOICER_API_URL}/tasks/${taskId}/result`, { headers: headers() });
   if (!r.ok) throw new VoicerError(`Voicer /result: ${r.status}`);
   return Buffer.from(await r.arrayBuffer());
 }
@@ -124,7 +125,7 @@ export interface WordTimestamp {
 export async function downloadTimestamps(taskId: number): Promise<WordTimestamp[] | null> {
   ensureConfigured();
   try {
-    const r = await fetch(`${env.VOICER_API_URL}/tasks/${taskId}/timestamps`, { headers: headers() });
+    const r = await proxyFetch(`${env.VOICER_API_URL}/tasks/${taskId}/timestamps`, { headers: headers() });
     if (!r.ok) return null;
     const data: any = await r.json();
     // Поддерживаем формат: { words: [{ word, start, end }] } или [{ word, start, end }]

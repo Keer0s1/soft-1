@@ -14,10 +14,11 @@ import { overlaysRouter } from './routes/overlays.js';
 import { taskQueue } from './lib/taskQueue.js';
 import { initSocket } from './lib/socket.js';
 import { prisma } from './db.js';
+import * as proxy from './lib/proxy.js';
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '500mb' }));
 
 // API
 app.use('/api/meta', metaRouter);
@@ -48,6 +49,10 @@ const server = app.listen(env.PORT, () => {
 
 initSocket(server);
 
+// Загружаем сохранённые настройки прокси (если есть) — применяются ко всем
+// исходящим запросам к Voicer / fast-gen.
+proxy.loadFromDb().catch((e) => console.warn('proxy.loadFromDb:', e?.message ?? e));
+
 // Помечаем зависшие Job (были running при прошлом крахе) как error
 async function markStaleJobs() {
   await prisma.job.updateMany({
@@ -67,3 +72,14 @@ async function shutdown(signal: string) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+process.on('uncaughtException', (err: any) => {
+  if (err?.code === 'ECONNABORTED' || err?.code === 'ECONNRESET' || err?.code === 'EPIPE') {
+    console.warn(`Клиент оборвал соединение (${err.code}) — игнорирую`);
+    return;
+  }
+  console.error('uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandledRejection:', reason);
+});

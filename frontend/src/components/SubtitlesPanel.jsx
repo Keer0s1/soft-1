@@ -9,7 +9,6 @@ const STYLES = [
 
 export default function SubtitlesPanel({ project, onPatch }) {
   const [open, setOpen] = useState(true);
-  if (!project.subtitlesEnabled) return null;
 
   const mode = project.subtitlesMode ?? 'karaoke';
 
@@ -17,9 +16,13 @@ export default function SubtitlesPanel({ project, onPatch }) {
     <div className="subs-panel">
       <div className="subs-panel-head" onClick={() => setOpen(o => !o)}>
         <span className="subs-panel-title">Субтитры</span>
+        <label className="subs-enable-toggle" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={!!project.subtitlesEnabled} onChange={(e) => onPatch({ subtitlesEnabled: e.target.checked })} />
+          {project.subtitlesEnabled ? 'вкл' : 'выкл'}
+        </label>
         <span className="subs-panel-toggle">{open ? '▾' : '▸'}</span>
       </div>
-      {open && <div className="subs-panel-body">
+      {open && project.subtitlesEnabled && <div className="subs-panel-body">
         {/* Режим показа */}
         <div className="subs-section">
           <span className="subs-section-title">Режим показа</span>
@@ -69,34 +72,58 @@ export default function SubtitlesPanel({ project, onPatch }) {
           </div>
         </div>
 
-        {/* Компактные настройки в одну строку */}
+        {/* Компактные настройки */}
         <div className="subs-compact">
           <label className="subs-sl">
-            <span>{project.subtitlesFontSize ?? 48}px</span>
-            <input type="range" min="24" max="96" step="2" value={project.subtitlesFontSize ?? 48} onChange={(e) => onPatch({ subtitlesFontSize: Number(e.target.value) })} />
+            <span>Размер {project.subtitlesFontSize ?? 48}px</span>
+            <input type="range" min="24" max="120" step="2" value={project.subtitlesFontSize ?? 48} onChange={(e) => onPatch({ subtitlesFontSize: Number(e.target.value) })} />
           </label>
           <label className="subs-sl">
             <span>Обводка {project.subtitlesOutline ?? 3}</span>
             <input type="range" min="0" max="8" step="0.5" value={project.subtitlesOutline ?? 3} onChange={(e) => onPatch({ subtitlesOutline: Number(e.target.value) })} />
           </label>
           <label className="subs-sl">
+            <span>Тень {project.subtitlesShadow ?? 2}</span>
+            <input type="range" min="0" max="5" step="0.5" value={project.subtitlesShadow ?? 2} onChange={(e) => onPatch({ subtitlesShadow: Number(e.target.value) })} />
+          </label>
+          <label className="subs-sl">
             <span>Промежуток {project.subtitlesSpacing ?? 4}px</span>
-            <input type="range" min="0" max="30" step="1" value={project.subtitlesSpacing ?? 4} onChange={(e) => onPatch({ subtitlesSpacing: Number(e.target.value) })} />
+            <input type="range" min="0" max="50" step="1" value={project.subtitlesSpacing ?? 4} onChange={(e) => onPatch({ subtitlesSpacing: Number(e.target.value) })} />
           </label>
           <label className="subs-sl">
             <span>X {project.subtitlesX ?? 50}%</span>
-            <input type="range" min="10" max="90" value={project.subtitlesX ?? 50} onChange={(e) => onPatch({ subtitlesX: Number(e.target.value) })} />
+            <input type="range" min="5" max="95" value={project.subtitlesX ?? 50} onChange={(e) => onPatch({ subtitlesX: Number(e.target.value) })} />
           </label>
           <label className="subs-sl">
             <span>Y {project.subtitlesY ?? 85}%</span>
-            <input type="range" min="10" max="95" value={project.subtitlesY ?? 85} onChange={(e) => onPatch({ subtitlesY: Number(e.target.value) })} />
+            <input type="range" min="5" max="95" value={project.subtitlesY ?? 85} onChange={(e) => onPatch({ subtitlesY: Number(e.target.value) })} />
           </label>
-          <input type="color" value={project.subtitlesColor ?? '#FFFFFF'} onChange={(e) => onPatch({ subtitlesColor: e.target.value })} title="Цвет текста" className="subs-color" />
-          <input type="color" value={project.subtitlesOutlineColor ?? '#000000'} onChange={(e) => onPatch({ subtitlesOutlineColor: e.target.value })} title="Обводка" className="subs-color" />
-          <label className="fx-toggle" style={{ fontSize: 11 }}>
+        </div>
+        <div className="subs-colors">
+          <label className="subs-color-label">
+            <input type="color" value={project.subtitlesColor ?? '#FFFFFF'} onChange={(e) => onPatch({ subtitlesColor: e.target.value })} className="subs-color" />
+            <span>Текст</span>
+          </label>
+          <label className="subs-color-label">
+            <input type="color" value={project.subtitlesOutlineColor ?? '#000000'} onChange={(e) => onPatch({ subtitlesOutlineColor: e.target.value })} className="subs-color" />
+            <span>Обводка</span>
+          </label>
+          <label className="subs-color-label">
             <input type="checkbox" checked={project.subtitlesBgEnabled ?? false} onChange={(e) => onPatch({ subtitlesBgEnabled: e.target.checked })} />
-            Фон
+            <span>Фон</span>
           </label>
+          {project.subtitlesBgEnabled && (
+            <>
+              <label className="subs-color-label">
+                <input type="color" value={project.subtitlesBgColor ?? '#000000'} onChange={(e) => onPatch({ subtitlesBgColor: e.target.value })} className="subs-color" />
+                <span>Цвет фона</span>
+              </label>
+              <label className="subs-sl" style={{ flex: 1 }}>
+                <span>Прозрачность {Math.round((project.subtitlesBgOpacity ?? 0.5) * 100)}%</span>
+                <input type="range" min="0" max="1" step="0.05" value={project.subtitlesBgOpacity ?? 0.5} onChange={(e) => onPatch({ subtitlesBgOpacity: Number(e.target.value) })} />
+              </label>
+            </>
+          )}
         </div>
       </div>}
     </div>

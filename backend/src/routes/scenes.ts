@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { prisma } from '../db.js';
 import { abs, rel, projectDir } from '../lib/paths.js';
-import { generateSceneImage, generateMissing, saveUploadedImage, setActiveImage, activeGenerations } from '../services/images.js';
-import { generateVoicePreview, getWordTimestamps } from '../services/voice.js';
+import { generateSceneImage, generateMissing, saveUploadedImage, setActiveImage } from '../services/images.js';
+import { generateVoicePreview, getWordTimestamps, getSilences } from '../services/voice.js';
 import { assemblyBlockReason } from '../services/pipeline.js';
 import { runVideoPreview } from '../services/videoPreview.js';
 import { taskQueue } from '../lib/taskQueue.js';
@@ -62,22 +62,15 @@ scenesRouter.post('/projects/:id/images/generate-missing', async (req, res) => {
   res.status(202).json({ ok: true });
 });
 
-// Отменить генерацию картинок (только те что ещё в очереди, не ушли на API)
+// Отменить генерацию картинок: останавливаем очередь и сбрасываем все pending сцены
 scenesRouter.delete('/projects/:id/images/cancel', async (req, res) => {
   const taskId = `gen-missing-${req.params.id}`;
   const cancelled = taskQueue.cancel(taskId);
-  const pending = await prisma.scene.findMany({
+  const { count } = await prisma.scene.updateMany({
     where: { projectId: req.params.id, imageStatus: 'pending' },
-    select: { id: true },
+    data: { imageStatus: 'none', imageError: 'Отменено' },
   });
-  const toReset = pending.filter((s) => !activeGenerations.has(s.id)).map((s) => s.id);
-  if (toReset.length > 0) {
-    await prisma.scene.updateMany({
-      where: { id: { in: toReset } },
-      data: { imageStatus: 'none', imageError: 'Отменено' },
-    });
-  }
-  res.json({ ok: true, cancelled, resetCount: toReset.length });
+  res.json({ ok: true, cancelled, resetCount: count });
 });
 
 // Превью озвучки всего сценария (фоном)
@@ -124,6 +117,18 @@ scenesRouter.get('/projects/:id/voice-timestamps', async (req, res) => {
     const perWord = dur / words.length;
     const result = words.map((word, i) => ({ word, startSec: +(i * perWord).toFixed(3), endSec: +((i + 1) * perWord).toFixed(3) }));
     res.json(result);
+  } catch {
+    res.json([]);
+  }
+});
+
+// Паузы в озвучке (для точной привязки границ сцен на превью)
+scenesRouter.get('/projects/:id/voice-silences', async (req, res) => {
+  const project = await prisma.project.findUnique({ where: { id: req.params.id }, select: { id: true, folderName: true } });
+  if (!project) return res.status(404).json({ error: 'Проект не найден' });
+  try {
+    const silences = await getSilences(project.id, project.folderName);
+    res.json(silences);
   } catch {
     res.json([]);
   }

@@ -15,3 +15,9 @@ export async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>
   store.set(key, { value, expires: Date.now() + ttlMs });
   return value;
 }
+
+/** Сбросить запись кеша по ключу (или все, если ключ не указан). */
+export function invalidate(key?: string): void {
+  if (key) store.delete(key);
+  else store.clear();
+}

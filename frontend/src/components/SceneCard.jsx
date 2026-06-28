@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api.js';
+import Icon from './Icon.jsx';
 
 const STATUS = {
   none: { label: 'нет картинки', cls: 'none' },
@@ -58,10 +59,10 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
     <div className="scene-card" ref={setNodeRef} style={style}>
       <div className="scene-card-num">
         <span className="drag-handle" {...attributes} {...listeners} title="Перетащить">⠿</span>
-        <span>{index + 1}</span>
+        <span className="scene-num-badge">#{index + 1}</span>
         <div className="scene-move">
-          <button className="icon-btn" onClick={() => onMove(-1)} disabled={index === 0}>▲</button>
-          <button className="icon-btn" onClick={() => onMove(1)} disabled={index === total - 1}>▼</button>
+          <button className="icon-btn" onClick={() => onMove(-1)} disabled={index === 0} title="Выше"><Icon name="chevronUp" size={12} /></button>
+          <button className="icon-btn" onClick={() => onMove(1)} disabled={index === total - 1} title="Ниже"><Icon name="chevronDown" size={12} /></button>
         </div>
       </div>
 
@@ -71,19 +72,22 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
           {scene.imagePath ? (
             <img src={`/files/${scene.imagePath}${cacheBust}`} alt={`сцена ${index + 1}`} />
           ) : (
-            <span className="thumb-text">{busy ? '⏳' : '🖼'}</span>
+            <span className="thumb-text"><Icon name="image" size={28} stroke={1.2} /></span>
           )}
-          <span className={`thumb-badge badge-${st.cls}`}>{busy ? 'генерится…' : st.label}</span>
+          <span className={`thumb-badge badge-${st.cls}`}>{busy ? 'генерится' : st.label}</span>
         </div>
         <div className="scene-image-actions">
-          <button className="ghost small" onClick={() => regen(false)} disabled={busy}>
-            {scene.imageStatus === 'done' ? '🔄 Перегенерировать' : '✨ Сгенерировать'}
+          <button onClick={() => regen(false)} disabled={busy} title={scene.imageStatus === 'done' ? 'Сгенерировать заново с тем же промтом' : 'Сгенерировать'}>
+            <Icon name={scene.imageStatus === 'done' ? 'refresh' : 'sparkles'} size={12} />
+            {scene.imageStatus === 'done' ? 'Перегенерировать' : 'Сгенерировать'}
           </button>
-          <button className="ghost small" onClick={() => regen(true)} disabled={busy} title="Та же сцена, другой результат">
-            🎲 Другой вариант
+          <button onClick={() => regen(true)} disabled={busy} title="Та же сцена, другой результат">
+            <Icon name="dice" size={12} />
+            Другой
           </button>
-          <button className="ghost small" onClick={() => fileRef.current?.click()} disabled={busy}>
-            ⬆ Своё фото
+          <button onClick={() => fileRef.current?.click()} disabled={busy} title="Загрузить своё фото">
+            <Icon name="upload" size={12} />
+            Своё
           </button>
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickFile} />
         </div>
@@ -91,7 +95,7 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
           <div className="error-box small">{scene.imageError}</div>
         )}
 
-        {/* Лента вариантов — клик ставит вариант активным (откат к прошлому фото) */}
+        {/* Лента вариантов */}
         {variants.length > 1 && (
           <div className="variants" title="Прошлые варианты — кликни, чтобы вернуть">
             {variants.map((v) => (
@@ -102,7 +106,7 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
                 title={v.source === 'upload' ? 'Загруженное фото' : 'Сгенерировано'}
               >
                 <img src={`/files/${v.path}`} alt="вариант" />
-                {v.source === 'upload' && <span className="variant-tag">⬆</span>}
+                {v.source === 'upload' && <span className="variant-tag">↑</span>}
               </button>
             ))}
           </div>
@@ -114,7 +118,7 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
         <label>
           Текст озвучки
           <textarea
-            rows={3}
+            rows={2}
             value={voiceText}
             onChange={(e) => setVoiceText(e.target.value)}
             onBlur={() => saveField('voiceText', voiceText)}
@@ -131,12 +135,13 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
             placeholder="Image prompt (лучше на английском)…"
           />
         </label>
-        <span className="muted small">
-          После правки промта нажми «Перегенерировать» — картинка заменится на этом же месте.
-        </span>
       </div>
 
-      <button className="icon-btn danger" title="Удалить сцену" onClick={onDelete} disabled={total === 1}>✕</button>
+      <div className="scene-card-side">
+        <button className="icon-btn danger" title="Удалить сцену" onClick={onDelete} disabled={total === 1}>
+          <Icon name="trash" size={14} />
+        </button>
+      </div>
     </div>
   );
 }
