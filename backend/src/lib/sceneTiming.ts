@@ -262,7 +262,10 @@ function enforceMinDuration(
   minSec: number,
 ): void {
   const n = overrides.length;
-  // Проход слева направо: если сцена короче минимума, заберём у следующей.
+
+  // Проход 1 — «мягкий»: короткая сцена забирает время у следующей, если у той
+  // есть запас сверх минимума. Работает, когда рядом с короткой сценой стоят
+  // длинные.
   for (let i = 0; i < n - 1; i++) {
     if (overrides[i] != null) continue;
     const dur = boundaries[i + 1] - boundaries[i];
@@ -274,7 +277,7 @@ function enforceMinDuration(
       boundaries[i + 1] += give;
     }
   }
-  // Если последняя короче — заберём у предыдущей.
+  // Последняя короткая — тянем у предыдущей (если есть запас).
   const last = n - 1;
   if (last > 0 && overrides[last] == null) {
     const dur = boundaries[last + 1] - boundaries[last];
@@ -283,6 +286,24 @@ function enforceMinDuration(
       const prevDur = boundaries[last] - boundaries[last - 1];
       const giveable = overrides[last - 1] != null ? 0 : Math.max(0, prevDur - minSec);
       boundaries[last] -= Math.min(need, giveable);
+    }
+  }
+
+  // Проход 2 — «жёсткий»: если после первого прохода сцены всё ещё короче
+  // минимума (например, все соседи тоже коротышки — перечисление по 1 слову),
+  // раздвигаем границы вправо. Общая длительность видео при этом становится
+  // больше аудио: в конце будет тишина под последними кадрами.
+  // Override-сцены не трогаем — их пользователь зафиксировал явно.
+  for (let i = 0; i < n; i++) {
+    if (overrides[i] != null) continue;
+    const dur = boundaries[i + 1] - boundaries[i];
+    if (dur < minSec) {
+      const shift = minSec - dur;
+      // Сдвигаем эту границу и все последующие — сцена станет длиной minSec,
+      // соседи справа поедут вправо ровно на shift.
+      for (let j = i + 1; j < boundaries.length; j++) {
+        boundaries[j] += shift;
+      }
     }
   }
 }

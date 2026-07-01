@@ -367,6 +367,23 @@ export default function EffectsPanel({ project, effects, onPatch, sampleA, sampl
                   onChange={(e) => onPatch({ subtitlesShadow: Number(e.target.value) })} />
               </label>
             </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'end' }}>
+              <label className="fx-slider" style={{ minWidth: 220 }}>
+                Сдвиг: {(project.subtitlesOffsetSec ?? 0) >= 0 ? '+' : ''}{(project.subtitlesOffsetSec ?? 0).toFixed(2)}с
+                <input type="range" min="-2" max="2" step="0.05" value={project.subtitlesOffsetSec ?? 0}
+                  onChange={(e) => onPatch({ subtitlesOffsetSec: Number(e.target.value) })} />
+              </label>
+              {(project.subtitlesOffsetSec ?? 0) !== 0 && (
+                <button type="button" className="ghost small" onClick={() => onPatch({ subtitlesOffsetSec: 0 })}>Сброс</button>
+              )}
+              <label className="fx-toggle">
+                <input type="checkbox" checked={project.subtitlesHoldGap !== false} onChange={(e) => onPatch({ subtitlesHoldGap: e.target.checked })} />
+                Держать фразу до следующей
+              </label>
+            </div>
+            <div className="muted small">
+              Если субтитры уплывают вперёд — увеличивай сдвиг (положительный сдвигает субтитры позже), если отстают — уменьшай. «Держать фразу» убирает мигание в паузах между фразами.
+            </div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
               <label className="fx-toggle">
                 <input type="checkbox" checked={project.subtitlesBgEnabled ?? false} onChange={(e) => onPatch({ subtitlesBgEnabled: e.target.checked })} />

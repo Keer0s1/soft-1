@@ -75,6 +75,8 @@ model Project {
   subtitlesBgColor   String  @default("#000000")
   subtitlesBgOpacity Float   @default(0.5) // 0–1
   subtitlesSpacing   Float   @default(4)   // расстояние между словами в px (для karaoke)
+  subtitlesOffsetSec Float   @default(0)   // сдвиг субтитров, сек. + = позже, − = раньше
+  subtitlesHoldGap   Boolean @default(true) // держать фразу до начала следующей вместо мгновенного исчезновения
 
   // Превью озвучки всего сценария (до сборки ролика)
   voicePreviewPath   String?

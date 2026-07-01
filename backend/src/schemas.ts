@@ -57,6 +57,8 @@ export const updateProjectSchema = z.object({
   subtitlesBgColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   subtitlesBgOpacity: z.number().min(0).max(1).optional(),
   subtitlesSpacing: z.number().min(0).max(50).optional(),
+  subtitlesOffsetSec: z.number().min(-3).max(3).optional(),
+  subtitlesHoldGap: z.boolean().optional(),
 });
 
 export const replaceScenesSchema = z.object({

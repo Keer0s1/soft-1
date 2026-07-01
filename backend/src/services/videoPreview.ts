@@ -8,7 +8,8 @@ import { audioDuration, renderSceneClip, stitchClips, applyGrading, mixAudioWith
 import { buildZoomFilter, staticFilter, resolveEffects, EffectOverrides } from '../lib/effects.js';
 import { rel, abs, projectDir } from '../lib/paths.js';
 import { emitToProject } from '../lib/socket.js';
-import { writeWordASS, writeASS, writeCtaASS, writeOverlayASS } from '../lib/subtitles.js';
+import { writeWordASS, writeASS, writeCtaASS, writeOverlayASS, synthesizeWordTimestamps } from '../lib/subtitles.js';
+import { getSilences } from './voice.js';
 import { getValidVoicePath, getWordTimestamps } from './voice.js';
 import { computeClipHash } from '../lib/hash.js';
 
@@ -42,7 +43,8 @@ export async function computePreviewHash(projectId: string): Promise<string> {
     g: [project.grainEnabled, project.grainIntensity, project.vignetteEnabled, project.vignetteIntensity, project.lutFile],
     cc: [(project as any).ccBrightness, (project as any).ccContrast, (project as any).ccSaturation, (project as any).ccTemperature],
     s: [project.subtitlesEnabled, project.subtitlesStyle, project.subtitlesFontSize, (project as any).subtitlesColor,
-        (project as any).subtitlesOutline, (project as any).subtitlesAnimation, (project as any).subtitlesX, (project as any).subtitlesY],
+        (project as any).subtitlesOutline, (project as any).subtitlesAnimation, (project as any).subtitlesX, (project as any).subtitlesY,
+        (project as any).subtitlesOffsetSec ?? 0, (project as any).subtitlesHoldGap ?? true],
     m: [project.bgMusicPath, project.bgMusicVolume, project.bgMusicDucking],
     voice: project.voicePreviewPath,
     ov: overlays,
@@ -89,12 +91,14 @@ export async function runVideoPreview(projectId: string): Promise<void> {
     });
 
     // Мин-хольд: не даём коротким сценам мельтешить (защита от «спиннера»).
+    // Мягкий проход — забираем у соседей. Жёсткий — если у соседей тоже нет
+    // запаса, растягиваем каждую короткую сцену до min (видео станет длиннее
+    // аудио, но зато картинки не мельтешат).
     const minSec = (project as any).minSceneDurationSec ?? 1.5;
     const isOverride = scenes.map(s => {
       const o = s.durationOverride as number | null;
       return o != null && o > 0;
     });
-    // Слева направо: короткая сцена забирает у следующей.
     for (let i = 0; i < durations.length - 1; i++) {
       if (isOverride[i]) continue;
       if (durations[i] < minSec) {
@@ -105,7 +109,6 @@ export async function runVideoPreview(projectId: string): Promise<void> {
         durations[i + 1] -= give;
       }
     }
-    // Последняя короткая — забирает у предыдущей.
     const last = durations.length - 1;
     if (last > 0 && !isOverride[last] && durations[last] < minSec) {
       const need = minSec - durations[last];
@@ -113,6 +116,13 @@ export async function runVideoPreview(projectId: string): Promise<void> {
       const give = Math.min(need, giveable);
       durations[last] += give;
       durations[last - 1] -= give;
+    }
+    // Жёсткий проход
+    for (let i = 0; i < durations.length; i++) {
+      if (isOverride[i]) continue;
+      if (durations[i] < minSec) {
+        durations[i] = minSec;
+      }
     }
 
     // Resolve effects
@@ -245,11 +255,9 @@ export async function runVideoPreview(projectId: string): Promise<void> {
         let wordTs = getWordTimestamps(projectId, project.folderName);
         if (!wordTs) {
           const fullText = scenes.map(s => s.voiceText).join(' ');
-          const words = fullText.split(/\s+/).filter(w => w.trim());
-          if (words.length && total > 0) {
-            const perWord = total / words.length;
-            wordTs = words.map((word, i) => ({ word, startSec: +(i * perWord).toFixed(3), endSec: +((i + 1) * perWord).toFixed(3) }));
-          }
+          const sil = await getSilences(projectId, project.folderName);
+          const synth = synthesizeWordTimestamps(fullText, total, sil);
+          if (synth.length > 0) wordTs = synth as any;
         }
         if (wordTs) {
           const baseFontSize = isVertical ? Math.round((project.subtitlesFontSize ?? 48) * 1.4) : (project.subtitlesFontSize ?? 48);
@@ -268,6 +276,8 @@ export async function runVideoPreview(projectId: string): Promise<void> {
             bgColor: (project as any).subtitlesBgColor ?? '#000000',
             bgOpacity: (project as any).subtitlesBgOpacity ?? 0.5,
             spacing: Math.round(((project as any).subtitlesSpacing ?? 4) * scaleFactor),
+            offsetSec: (project as any).subtitlesOffsetSec ?? 0,
+            holdGap: (project as any).subtitlesHoldGap ?? true,
           }, prevDir);
         } else {
           // Fallback: scene-level subtitles (как в полном рендере)
@@ -292,6 +302,8 @@ export async function runVideoPreview(projectId: string): Promise<void> {
             bgColor: (project as any).subtitlesBgColor ?? '#000000',
             bgOpacity: (project as any).subtitlesBgOpacity ?? 0.5,
             spacing: Math.round(((project as any).subtitlesSpacing ?? 4) * scaleFactor),
+            offsetSec: (project as any).subtitlesOffsetSec ?? 0,
+            holdGap: (project as any).subtitlesHoldGap ?? true,
           }, prevDir);
         }
       }

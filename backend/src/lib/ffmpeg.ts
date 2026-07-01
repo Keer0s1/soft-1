@@ -340,7 +340,7 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
     await run(
       FFMPEG,
       ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-i', o.audioPath,
-        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
+        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', o.outPath],
       'ffmpeg не смог склеить клипы',
       undefined,
       { onProgress: (sec) => o.onProgress?.(sec, Math.max(totalSec, 1)) },
@@ -391,7 +391,7 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
     await run(
       FFMPEG,
       ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-i', o.audioPath,
-        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
+        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', o.outPath],
       'ffmpeg не смог склеить чанки',
     );
     fs.rmSync(chunkDir, { recursive: true, force: true });
@@ -448,7 +448,7 @@ async function stitchChunk(
   fs.writeFileSync(fcPath, chain, 'utf-8');
 
   const mapArgs = audioPath
-    ? ['-map', '[vout]', '-map', `${n}:a`, '-c:a', 'aac', '-b:a', '192k', '-shortest']
+    ? ['-map', '[vout]', '-map', `${n}:a`, '-c:a', 'aac', '-b:a', '192k']
     : ['-map', '[vout]'];
 
   // Используем настроенный кодек (NVENC/QSV/AMF) — иначе на проектах с

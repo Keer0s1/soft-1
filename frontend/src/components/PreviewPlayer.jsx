@@ -141,6 +141,9 @@ export default function PreviewPlayer({ scenes, timeline, voicePreviewPath, proj
 
   // Karaoke subtitles: group words into phrases, highlight current word
   const isKaraokeMode = (project?.subtitlesMode ?? 'karaoke') === 'karaoke';
+  const subtitleOffset = Number(project?.subtitlesOffsetSec ?? 0);
+  const holdGap = project?.subtitlesHoldGap !== false;
+  const MAX_HOLD_SEC = 2.0;
   const karaokePhrase = useMemo(() => {
     if (!project?.subtitlesEnabled || !wordTimestamps.length || !isKaraokeMode) return null;
     const maxWords = 4;
@@ -157,14 +160,19 @@ export default function PreviewPlayer({ scenes, timeline, voicePreviewPath, proj
       current.push(w);
     }
     if (current.length > 0) phrases.push(current);
-    // Find the phrase active at currentTime
-    for (const phrase of phrases) {
-      const start = phrase[0].startSec;
-      const end = phrase[phrase.length - 1].endSec;
+    // Find the phrase active at currentTime (учитываем offset + hold-until-next)
+    for (let pi = 0; pi < phrases.length; pi++) {
+      const phrase = phrases[pi];
+      const start = phrase[0].startSec + subtitleOffset;
+      let end = phrase[phrase.length - 1].endSec + subtitleOffset;
+      if (holdGap && pi + 1 < phrases.length) {
+        const nextStart = phrases[pi + 1][0].startSec + subtitleOffset;
+        end = Math.min(nextStart - 0.05, end + MAX_HOLD_SEC);
+      }
       if (currentTime >= start - 0.05 && currentTime <= end + 0.1) return phrase;
     }
     return null;
-  }, [wordTimestamps, currentTime, project?.subtitlesEnabled]);
+  }, [wordTimestamps, currentTime, project?.subtitlesEnabled, subtitleOffset, holdGap]);
 
   // Fallback to scene text if no word timestamps
   const subtitleText = (!karaokePhrase && project?.subtitlesEnabled) ? (scene?.voiceText || '') : '';

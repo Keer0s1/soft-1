@@ -24,6 +24,10 @@ export interface SubtitleOpts {
   bgColor?: string;
   bgOpacity?: number;
   spacing?: number;
+  /** Глобальный сдвиг всех таймингов в секундах. + = субтитры позже, − = раньше. */
+  offsetSec?: number;
+  /** Держать фразу на экране до старта следующей (или до конца ролика). Убирает мигание в паузах. */
+  holdGap?: boolean;
 }
 
 const FONTS: Record<string, string> = {
@@ -51,9 +55,10 @@ function hexToASSWithAlpha(hex: string, alpha: number): string {
 }
 
 function formatTime(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
+  const clamped = Math.max(0, sec);
+  const h = Math.floor(clamped / 3600);
+  const m = Math.floor((clamped % 3600) / 60);
+  const s = clamped % 60;
   return `${h}:${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
 }
 
@@ -104,12 +109,25 @@ export function generateASS(scenes: SubtitleScene[], opts: SubtitleOpts): string
   ];
 
   const anim = opts.animation ?? 'fade';
+  const offset = opts.offsetSec ?? 0;
+  const holdGap = opts.holdGap !== false; // по умолчанию включен
+  const MAX_HOLD_SEC = 2.0; // не даём фразе «висеть» дольше 2с после её конца
 
-  for (const scene of scenes) {
-    if (!scene.text.trim()) continue;
-    const start = formatTime(scene.startSec);
-    const end = formatTime(scene.endSec);
-    const durationMs = (scene.endSec - scene.startSec) * 1000;
+  const activeScenes = scenes.filter((s) => s.text.trim().length > 0);
+  for (let i = 0; i < activeScenes.length; i++) {
+    const scene = activeScenes[i];
+    const rawStart = scene.startSec + offset;
+    let rawEnd = scene.endSec + offset;
+    if (holdGap && i + 1 < activeScenes.length) {
+      const nextStart = activeScenes[i + 1].startSec + offset;
+      // Продлеваем до старта следующей минус минимальный зазор,
+      // но не больше MAX_HOLD_SEC от исходного конца.
+      const cappedEnd = Math.min(nextStart - 0.05, rawEnd + MAX_HOLD_SEC);
+      if (cappedEnd > rawEnd) rawEnd = cappedEnd;
+    }
+    const start = formatTime(rawStart);
+    const end = formatTime(rawEnd);
+    const durationMs = Math.max(0, rawEnd - rawStart) * 1000;
     const text = scene.text.replace(/\n/g, '\\N').replace(/\r/g, '');
 
     let animTag = buildAnimation(anim, durationMs);
@@ -138,6 +156,86 @@ export interface WordTimestamp {
   word: string;
   startSec: number;
   endSec: number;
+}
+
+export interface SilenceRange {
+  start: number;
+  end: number;
+  duration: number;
+}
+
+/**
+ * Умный фолбэк для word-timestamps, когда Voicer их не вернул.
+ * Использует детектированные паузы в озвучке: делим аудио на речевые сегменты
+ * между паузами и распределяем слова внутри каждого сегмента пропорционально
+ * длине (в символах). Даёт куда меньший дрейф, чем плоское total/wordCount.
+ *
+ * Если пауз нет — падаем на пропорциональное деление по длине слов
+ * (тоже точнее плоского перечисления).
+ */
+export function synthesizeWordTimestamps(
+  fullText: string,
+  totalAudio: number,
+  silences: SilenceRange[] = [],
+): WordTimestamp[] {
+  const rawWords = fullText.split(/\s+/).filter((w) => w.trim().length > 0);
+  if (rawWords.length === 0 || totalAudio <= 0) return [];
+
+  // Речевые сегменты — интервалы между значимыми паузами.
+  const MIN_SIG_PAUSE = 0.2;
+  const cuts: { start: number; end: number }[] = [];
+  const sortedSil = silences
+    .filter((s) => s.duration >= MIN_SIG_PAUSE)
+    .slice()
+    .sort((a, b) => a.start - b.start);
+  let cursor = 0;
+  for (const s of sortedSil) {
+    if (s.start > cursor + 0.05) {
+      cuts.push({ start: cursor, end: s.start });
+    }
+    cursor = s.end;
+  }
+  if (cursor < totalAudio - 0.05) cuts.push({ start: cursor, end: totalAudio });
+  if (cuts.length === 0) cuts.push({ start: 0, end: totalAudio });
+
+  // Распределяем слова по сегментам пропорционально длительности сегмента:
+  // сколько «речевого времени» = столько слов. Каждое слово занимает время
+  // пропорционально своей длине в символах.
+  const speechTotal = cuts.reduce((a, c) => a + (c.end - c.start), 0) || totalAudio;
+  const wordsPerSegment: string[][] = cuts.map(() => []);
+  const totalChars = rawWords.reduce((a, w) => a + Math.max(w.length, 1), 0);
+  const targets = cuts.map((c) => ((c.end - c.start) / speechTotal) * totalChars);
+  let charsPlaced = 0;
+  let segIdx = 0;
+  for (const w of rawWords) {
+    if (segIdx < cuts.length - 1) {
+      const cumTarget = targets.slice(0, segIdx + 1).reduce((a, b) => a + b, 0);
+      if (charsPlaced + Math.max(w.length, 1) / 2 > cumTarget) segIdx++;
+    }
+    wordsPerSegment[segIdx].push(w);
+    charsPlaced += Math.max(w.length, 1);
+  }
+
+  // Внутри каждого сегмента раскладываем слова пропорционально длине.
+  const out: WordTimestamp[] = [];
+  for (let i = 0; i < cuts.length; i++) {
+    const segWords = wordsPerSegment[i];
+    if (segWords.length === 0) continue;
+    const segStart = cuts[i].start;
+    const segDur = Math.max(0, cuts[i].end - cuts[i].start);
+    const segChars = segWords.reduce((a, w) => a + Math.max(w.length, 1), 0) || 1;
+    let acc = segStart;
+    for (const w of segWords) {
+      const wDur = (Math.max(w.length, 1) / segChars) * segDur;
+      out.push({
+        word: w,
+        startSec: +acc.toFixed(3),
+        endSec: +(acc + wDur).toFixed(3),
+      });
+      acc += wDur;
+    }
+  }
+  return out;
 }
 
 /**
@@ -204,11 +302,22 @@ export function generateKaraokeASS(words: WordTimestamp[], opts: SubtitleOpts): 
 
   // Group into phrases
   const phrases = groupWordsIntoPhrases(words, 4, 0.6);
+  const offset = opts.offsetSec ?? 0;
+  const holdGap = opts.holdGap !== false;
+  const MAX_HOLD_SEC = 2.0;
   let wordIdx = 0;
 
-  for (const phrase of phrases) {
-    const start = formatTime(phrase.startSec);
-    const end = formatTime(phrase.endSec);
+  for (let pi = 0; pi < phrases.length; pi++) {
+    const phrase = phrases[pi];
+    const startSecRaw = phrase.startSec + offset;
+    let endSecRaw = phrase.endSec + offset;
+    if (holdGap && pi + 1 < phrases.length) {
+      const nextStart = phrases[pi + 1].startSec + offset;
+      const cappedEnd = Math.min(nextStart - 0.05, endSecRaw + MAX_HOLD_SEC);
+      if (cappedEnd > endSecRaw) endSecRaw = cappedEnd;
+    }
+    const start = formatTime(startSecRaw);
+    const end = formatTime(endSecRaw);
     // Build karaoke text: each word gets \kf timing, highlighted word uses override
     let text = `{\\an5\\pos(${posX},${posY})}`;
     const phraseWords: WordTimestamp[] = [];
@@ -217,7 +326,7 @@ export function generateKaraokeASS(words: WordTimestamp[], opts: SubtitleOpts): 
       wordIdx++;
     }
     for (const pw of phraseWords) {
-      const durCs = Math.round((pw.endSec - pw.startSec) * 100);
+      const durCs = Math.max(0, Math.round((pw.endSec - pw.startSec) * 100));
       text += `{\\kf${durCs}\\rHighlight}${pw.word} `;
     }
     lines.push(`Dialogue: 0,${start},${end},Default,,0,0,0,,${text.trim()}`);

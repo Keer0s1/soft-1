@@ -12,7 +12,7 @@ import { audioDuration, saveAudio, renderSceneClip, stitchClips, qualityOf, appl
 import { buildZoomFilter, staticFilter, pickSequence, validZoomPresets, validTransitionPresets, resolveEffects, EffectOverrides } from '../lib/effects.js';
 import { rel, abs, projectDir } from '../lib/paths.js';
 import { emitToProject } from '../lib/socket.js';
-import { writeASS, writeWordASS, writeCtaASS } from '../lib/subtitles.js';
+import { writeASS, writeWordASS, writeCtaASS, synthesizeWordTimestamps } from '../lib/subtitles.js';
 import { getValidVoicePath, getWordTimestamps, getSilences } from './voice.js';
 import { computeClipHash } from '../lib/hash.js';
 import { computeSceneDurations } from '../lib/sceneTiming.js';
@@ -410,14 +410,15 @@ export async function runJob(jobId: string): Promise<void> {
       if (p.subtitlesEnabled) {
         // Try word-level timestamps first (CapCut-style precise subtitles)
         let wordTs = getWordTimestamps(job.projectId, job.project.folderName);
-        // Fallback: generate proportional timestamps from text + audio duration
+        // Fallback: синтезируем таймстемпы по паузам в озвучке (silences.json)
+        // + пропорционально длине слов. Даёт куда меньший дрейф чем плоское
+        // total/wordCount, которое игнорирует реальный ритм речи.
         if (!wordTs) {
           const fullText2 = scenes.map(s => s.voiceText).join(' ');
-          const words = fullText2.split(/\s+/).filter(w => w.trim());
-          if (words.length && total > 0) {
-            const perWord = total / words.length;
-            wordTs = words.map((word, i) => ({ word, startSec: +(i * perWord).toFixed(3), endSec: +((i + 1) * perWord).toFixed(3) }));
-            await appendLog(jobId, `Сгенерированы пропорциональные таймстемпы (${words.length} слов)`);
+          const synth = synthesizeWordTimestamps(fullText2, total, silences);
+          if (synth.length > 0) {
+            wordTs = synth as any;
+            await appendLog(jobId, `Синтез таймингов слов: ${synth.length} слов, ${silences.length} пауз`);
           }
         }
         if (wordTs) {
@@ -438,6 +439,8 @@ export async function runJob(jobId: string): Promise<void> {
             bgColor: (p as any).subtitlesBgColor ?? '#000000',
             bgOpacity: (p as any).subtitlesBgOpacity ?? 0.5,
             spacing: (p as any).subtitlesSpacing ?? 4,
+            offsetSec: (p as any).subtitlesOffsetSec ?? 0,
+            holdGap: (p as any).subtitlesHoldGap ?? true,
           }, jobDir);
           await appendLog(jobId, 'Субтитры: пословный тайминг');
         } else {
@@ -465,6 +468,8 @@ export async function runJob(jobId: string): Promise<void> {
             bgColor: (p as any).subtitlesBgColor ?? '#000000',
             bgOpacity: (p as any).subtitlesBgOpacity ?? 0.5,
             spacing: (p as any).subtitlesSpacing ?? 4,
+            offsetSec: (p as any).subtitlesOffsetSec ?? 0,
+            holdGap: (p as any).subtitlesHoldGap ?? true,
           }, jobDir);
         }
       }

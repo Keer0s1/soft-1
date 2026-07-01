@@ -112,6 +112,8 @@ projectsRouter.patch('/:id', async (req, res) => {
   if (b.subtitlesBgEnabled !== undefined) data.subtitlesBgEnabled = b.subtitlesBgEnabled;
   if (b.subtitlesBgColor !== undefined) data.subtitlesBgColor = b.subtitlesBgColor;
   if (b.subtitlesBgOpacity !== undefined) data.subtitlesBgOpacity = b.subtitlesBgOpacity;
+  if (b.subtitlesOffsetSec !== undefined) data.subtitlesOffsetSec = b.subtitlesOffsetSec;
+  if (b.subtitlesHoldGap !== undefined) data.subtitlesHoldGap = b.subtitlesHoldGap;
 
   const project = await prisma.project.update({ where: { id: req.params.id }, data });
   res.json(project);

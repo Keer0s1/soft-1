@@ -151,6 +151,33 @@ describe('computeSceneDurations — выравнивание по словам',
     expect(r.boundaries[1]).toBeCloseTo(2.15, 1);
   });
 
+  it('перечисление коротких сцен: жёсткий минимум растягивает видео', () => {
+    // 5 сцен по 1 слову ~0.3с — все короткие подряд, забрать не у кого.
+    // Жёсткий проход должен растянуть каждую до min, общее видео станет 5*min.
+    const scenes = [
+      { voiceText: 'орехи' },
+      { voiceText: 'батарейки' },
+      { voiceText: 'щётка' },
+      { voiceText: 'мыло' },
+      { voiceText: 'крем' },
+    ];
+    const words = ws(
+      ['орехи',     0.0, 0.4],
+      ['батарейки', 0.4, 0.9],
+      ['щётка',     0.9, 1.2],
+      ['мыло',      1.2, 1.5],
+      ['крем',      1.5, 1.8],
+    );
+    const min = 1.7;
+    const r = computeSceneDurations(scenes, 1.8, [], words, min);
+    for (const d of r.durations) {
+      expect(d).toBeGreaterThanOrEqual(min - 1e-6);
+    }
+    // Общая длина видео — минимум 5 * 1.7 = 8.5с (аудио было 1.8с)
+    const total = r.durations.reduce((a, b) => a + b, 0);
+    expect(total).toBeGreaterThanOrEqual(5 * min - 1e-6);
+  });
+
   it('минималка 1.2с: короткая фраза тянет время у соседа', () => {
     const scenes = [
       { voiceText: 'Да' },

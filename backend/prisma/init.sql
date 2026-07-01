@@ -30,6 +30,8 @@ CREATE TABLE "Project" (
     "transitionPresets" JSONB NOT NULL DEFAULT '["fade","dissolve","smoothleft","circleopen","fadeblack"]',
     "renderQuality" TEXT NOT NULL DEFAULT 'balance',
     "minSceneDurationSec" DOUBLE PRECISION NOT NULL DEFAULT 1.5,
+    "subtitlesOffsetSec" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "subtitlesHoldGap" BOOLEAN NOT NULL DEFAULT true,
     "grainEnabled" BOOLEAN NOT NULL DEFAULT false,
     "grainIntensity" DOUBLE PRECISION NOT NULL DEFAULT 8,
     "vignetteEnabled" BOOLEAN NOT NULL DEFAULT false,
