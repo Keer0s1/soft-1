@@ -109,7 +109,9 @@ metaRouter.get('/providers', async (_req, res) => {
 // Лимиты на час и текущее использование (fast-gen). Кеш 20с.
 metaRouter.get('/usage', async (_req, res) => {
   try {
-    const data = await cached('usage', 20_000, () => fastgen.getUsage());
+    // 5 секунд кеш — после генерации usage надо видеть свежим, не ждать
+    // полминуты. Само поле в pipeline.ts инвалидируется invalidate('usage').
+    const data = await cached('usage', 5_000, () => fastgen.getUsage());
     const limits = data.account_limits ?? {};
     const hourly = data.current_usage?.hourly_usage ?? {};
     const threads = data.current_usage?.active_threads ?? {};
@@ -119,20 +121,40 @@ metaRouter.get('/usage', async (_req, res) => {
     const exp = expRaw ? new Date(expRaw < 1e12 ? expRaw * 1000 : expRaw) : null;
     const daysLeft = exp ? Math.max(0, Math.ceil((exp.getTime() - Date.now()) / 86_400_000)) : null;
 
+    // Окно лимита: API даёт window_start (sec) у каждого блока. Сброс через
+    // 3600с от него. Если данных нет — считаем «через час от сейчас» как
+    // подсказку (UI скроет точное время).
+    function resetAtFor(stats: any): number | null {
+      const ws = stats?.window_start;
+      if (typeof ws !== 'number' || !isFinite(ws) || ws <= 0) return null;
+      // Раньше API возвращал секунды; страхуемся от мс.
+      const seconds = ws < 1e12 ? ws : ws / 1000;
+      return Math.round((seconds + 3600) * 1000); // мс epoch
+    }
+    const imageResetAt = resetAtFor(hourly.image_generation);
+    const videoResetAt = resetAtFor(hourly.video_generation);
+    const promptResetAt = resetAtFor(hourly.prompt_generation);
+
     res.json({
       images: {
         used: hourly.image_generation?.current_usage ?? 0,
         limit: limits.img_gen_per_hour_limit ?? null,
         threads: threads.image_threads ?? 0,
         threadsAllowed: limits.img_generation_threads_allowed ?? null,
+        resetAt: imageResetAt,
       },
       video: {
         used: hourly.video_generation?.current_usage ?? 0,
         limit: limits.video_gen_per_hour_limit ?? null,
+        resetAt: videoResetAt,
       },
-      // Лимит картинок в час (показываем в плашке как "кредиты")
+      prompts: {
+        used: hourly.prompt_generation?.current_usage ?? 0,
+        limit: limits.prompt_tokens_per_hour_limit ?? null,
+        resetAt: promptResetAt,
+      },
+      // Старые поля (плоские) — для обратной совместимости со StatusBar
       credits: limits.img_gen_per_hour_limit ?? null,
-      // Лимит токенов промтов в час
       tokens: limits.prompt_tokens_per_hour_limit ?? null,
       promptTokensLimit: limits.prompt_tokens_per_hour_limit ?? null,
       daysLeft,
@@ -160,7 +182,16 @@ metaRouter.get('/status', async (_req, res) => {
       voicer: { ...vc, health: classify(vc) },
     };
   });
-  res.json(data);
+  const c = proxy.getConfig();
+  res.json({
+    ...data,
+    proxy: {
+      enabled: c.enabled && proxy.isActive(),
+      protocol: c.protocol,
+      host: c.host,
+      port: c.port,
+    },
+  });
 });
 
 // Баланс озвучки Voicer
@@ -293,4 +324,56 @@ metaRouter.post('/proxy/test', async (req, res) => {
     proxy.testProxy(`${env.FASTGEN_API_URL}/api/v6/usage`, override),
   ]);
   res.json({ voicer: vc, fastgen: fg });
+});
+
+// Реальная проверка картинкой: генерит картинку через выбранного провайдера
+// и качает её со storage. Это ЕДИНСТВЕННЫЙ способ убедиться, что прокси
+// тянет CDN — потому что fast-gen API может быть доступен и без прокси,
+// а storage режется провайдером отдельно.
+// ВНИМАНИЕ: fast-gen списывает кредиты по своему тарифу, мы это не контролируем.
+// Использует ТОЛЬКО сохранённую конфигурацию прокси — чтобы не мутировать
+// глобальный dispatcher во время реальной работы (старый applyTemporary
+// уводил все живые генерации на тестовый прокси). Перед тестом сохрани
+// конфиг через PUT /proxy.
+metaRouter.post('/proxy/test-image', async (req, res) => {
+  const body = req.body ?? {};
+  const t0 = Date.now();
+
+  const provider = typeof body.provider === 'string' ? body.provider : 'flow';
+  const prompt = (typeof body.prompt === 'string' && body.prompt.trim())
+    ? body.prompt.trim()
+    : 'cute fluffy kitten sitting on a windowsill, soft light';
+
+  let opId: string | null = null;
+  try {
+    const submitT0 = Date.now();
+    opId = await fastgen.submitImage(prompt, { provider, aspectRatio: '1:1' });
+    const submitMs = Date.now() - submitT0;
+
+    const downloadT0 = Date.now();
+    const bytes = await fastgen.waitForImage(opId, { timeoutMs: 300_000, pollMs: 3000 });
+    const downloadMs = Date.now() - downloadT0;
+
+    const dataUri = `data:image/png;base64,${bytes.toString('base64')}`;
+    res.json({
+      ok: true,
+      via: proxy.isActive() ? 'proxy' : 'direct',
+      provider,
+      prompt,
+      submitMs,
+      downloadMs,
+      totalMs: Date.now() - t0,
+      imageBytes: bytes.length,
+      imageDataUri: dataUri,
+    });
+  } catch (e: any) {
+    if (opId) fastgen.cancelGeneration(opId).catch(() => {});
+    res.json({
+      ok: false,
+      via: proxy.isActive() ? 'proxy' : 'direct',
+      provider,
+      totalMs: Date.now() - t0,
+      error: String(e?.message ?? e),
+    });
+  }
 });

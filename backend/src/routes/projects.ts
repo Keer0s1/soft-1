@@ -167,7 +167,9 @@ projectsRouter.post('/:id/parse', async (req, res) => {
   const parsed = parseFilesSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   try {
-    const scenes = parseTwoFiles(parsed.data.speechText, parsed.data.promptsText);
+    const scenes = parseTwoFiles(parsed.data.speechText, parsed.data.promptsText, {
+      bigStory: parsed.data.bigStory,
+    });
     res.json({ scenes });
   } catch (e: any) {
     res.status(400).json({ error: String(e?.message ?? e) });

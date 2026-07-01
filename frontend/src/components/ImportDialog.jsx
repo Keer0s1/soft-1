@@ -94,6 +94,10 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
   const [images, setImages] = useState([]); // [{ name, dataUri, sizeKb }]
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false);
+  // Режим «Большая история»: видеоряд не привязан к словам. Если строк
+  // сценария больше, чем промтов — лишние равномерно растворяются (каждая
+  // делится пополам: левая половина → к предыдущей, правая → к следующей).
+  const [bigStory, setBigStory] = useState(false);
 
   async function addImages(fileList) {
     if (!fileList || fileList.length === 0) return;
@@ -145,6 +149,25 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
     modeNote = `Речей: ${sLines.length} · Фоток: ${images.length}` +
       (pLines.length ? ` · Промтов: ${pLines.length}` : '') +
       (countOk ? ' — совпадает ✓' : ' — речь и фотки должны совпадать по количеству');
+  } else if (bigStory) {
+    // В режиме «большая история» главное — промты. Строк должно быть ≥ промтов.
+    const max = Math.max(sLines.length, pLines.length);
+    pairs = Array.from({ length: max }, (_, i) => ({
+      s: sLines[i],
+      p: pLines[i],
+      img: null,
+      bad: pLines[i] === undefined, // промт обязателен; речь подстроится
+    }));
+    countOk = pLines.length > 0 && sLines.length > 0;
+    if (!sLines.length || !pLines.length) {
+      modeNote = `Речей: ${sLines.length} · Промтов: ${pLines.length}`;
+    } else if (sLines.length === pLines.length) {
+      modeNote = `Речей: ${sLines.length} · Промтов: ${pLines.length} — совпадает ✓`;
+    } else if (sLines.length < pLines.length) {
+      modeNote = `Речей: ${sLines.length} · Промтов: ${pLines.length} — длинные строки разрежутся на ${pLines.length - sLines.length} дополнительных кусков ✓`;
+    } else {
+      modeNote = `Речей: ${sLines.length} · Промтов: ${pLines.length} — лишние ${sLines.length - pLines.length} строк растворятся в соседних ✓`;
+    }
   } else {
     const max = Math.max(sLines.length, pLines.length);
     pairs = Array.from({ length: max }, (_, i) => ({
@@ -172,7 +195,7 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
         }));
         await api.replaceScenesWithImages(projectId, scenes);
       } else {
-        const { scenes } = await api.parseFiles(projectId, speechText, promptsText);
+        const { scenes } = await api.parseFiles(projectId, speechText, promptsText, { bigStory });
         await api.replaceScenes(projectId, scenes);
       }
       onImported?.();
@@ -212,6 +235,27 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
           onAdd={addImages}
           onClear={() => setImages([])}
         />
+
+        {!hasImages && (
+          <label className="import-bigstory" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '14px 0 4px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={bigStory}
+              onChange={(e) => setBigStory(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              <b>Большая история</b>
+              <span className="muted small" style={{ display: 'block', marginTop: 2 }}>
+                Видеоряд не привязан к словам. Количество промтов = количество
+                сцен. Если строк сценария <b>больше</b> — лишние склеятся с
+                соседями. Если <b>меньше</b> — длинные строки разрежутся
+                пополам, чтобы заполнить недостающие сцены. Порядок сценария
+                сохраняется.
+              </span>
+            </span>
+          </label>
+        )}
 
         {/* Можно и вставить текстом, если без файлов */}
         <details className="import-paste">
@@ -259,7 +303,7 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
           <button onClick={doImport} disabled={!ready}>
             {importing
               ? 'Импортирую…'
-              : `Импортировать${countOk ? ` (${sLines.length})` : ''}`}
+              : `Импортировать${countOk ? ` (${bigStory && !hasImages ? pLines.length : sLines.length})` : ''}`}
           </button>
         </div>
       </div>

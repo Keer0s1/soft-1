@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api.js';
+import { toast } from './Toast.jsx';
 import Icon from './Icon.jsx';
 
 const STATUS = {
@@ -27,13 +28,23 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
   const busy = scene.imageStatus === 'pending';
   const cacheBust = scene.imageUpdatedAt ? `?t=${new Date(scene.imageUpdatedAt).getTime()}` : '';
 
+  // Сохраняет поле сцены при blur. Если сервер вернул ошибку — ОБЯЗАТЕЛЬНО
+  // показываем toast: иначе текст в textarea выглядит «сохранённым», а на
+  // следующей загрузке проекта пропадает.
   const saveField = (field, value) => {
-    if (value !== scene[field]) api.updateScene(projectId, scene.id, { [field]: value }).catch(() => {});
+    if (value === scene[field]) return;
+    api.updateScene(projectId, scene.id, { [field]: value }).catch((e) => {
+      toast(`Не удалось сохранить: ${e.message}`, 'error');
+    });
   };
 
   async function regen(newSeed) {
-    await api.genSceneImage(projectId, scene.id, newSeed);
-    onChanged?.(); // родитель начнёт поллинг статусов
+    try {
+      await api.genSceneImage(projectId, scene.id, newSeed);
+      onChanged?.(); // родитель начнёт поллинг статусов
+    } catch (e) {
+      toast(e.message || 'Не удалось запустить генерацию', 'error');
+    }
   }
 
   function onPickFile(e) {
@@ -42,15 +53,23 @@ export default function SceneCard({ projectId, scene, index, total, onMove, onDe
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (ev) => {
-      await api.uploadSceneImage(projectId, scene.id, ev.target.result);
-      onRefresh?.();
+      try {
+        await api.uploadSceneImage(projectId, scene.id, ev.target.result);
+        onRefresh?.();
+      } catch (err) {
+        toast(err.message || 'Не удалось загрузить фото', 'error');
+      }
     };
     reader.readAsDataURL(file);
   }
 
   async function pickVariant(imageId) {
-    await api.setActiveImage(projectId, scene.id, imageId);
-    onRefresh?.();
+    try {
+      await api.setActiveImage(projectId, scene.id, imageId);
+      onRefresh?.();
+    } catch (e) {
+      toast(e.message || 'Не удалось выбрать вариант', 'error');
+    }
   }
 
   const variants = scene.images ?? [];

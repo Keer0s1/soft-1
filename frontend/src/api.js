@@ -34,8 +34,8 @@ export const api = {
   // Импорт целиком (заменяет все сцены)
   replaceScenes: (id, scenes) => req('PUT', `/api/projects/${id}/scenes`, { scenes }),
   replaceScenesWithImages: (id, scenes) => req('POST', `/api/projects/${id}/scenes/with-images`, { scenes }),
-  parseFiles: (id, speechText, promptsText) =>
-    req('POST', `/api/projects/${id}/parse`, { speechText, promptsText }),
+  parseFiles: (id, speechText, promptsText, opts = {}) =>
+    req('POST', `/api/projects/${id}/parse`, { speechText, promptsText, ...opts }),
 
   // Картинки
   genSceneImage: (id, sceneId, newSeed = false) =>
@@ -102,4 +102,5 @@ export const api = {
   proxyGet: () => req('GET', '/api/meta/proxy'),
   proxySave: (data) => req('PUT', '/api/meta/proxy', data),
   proxyTest: (data) => req('POST', '/api/meta/proxy/test', data || {}),
+  proxyTestImage: (data) => req('POST', '/api/meta/proxy/test-image', data || {}),
 };

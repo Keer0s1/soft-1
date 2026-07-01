@@ -10,6 +10,7 @@ import { env } from '../env.js';
 import * as fastgen from '../lib/fastgen.js';
 import { rel, projectDir } from '../lib/paths.js';
 import { emitToProject } from '../lib/socket.js';
+import { invalidate } from '../lib/cache.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ATTEMPTS = 3;
@@ -92,6 +93,9 @@ export async function generateSceneImage(
         data: { sceneId, path: rel(file), source: 'ai', seed: seed ?? null, prompt: scene.imagePrompt, opId },
       });
       await setActive(sceneId, variant);
+      // Каждая удачная генерация съела кредиты — обнулим кеш usage,
+      // чтобы счётчик в шапке обновился сразу, а не через 5с.
+      invalidate('usage');
       emitToProject(project.id, 'scene:image:done', { sceneId });
       return;
     } catch (e: any) {

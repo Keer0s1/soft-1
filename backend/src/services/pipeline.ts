@@ -114,7 +114,13 @@ export async function runJob(jobId: string): Promise<void> {
 
       await setStep(jobId, 'Озвучка: ожидание синтеза', job.projectId);
       await voicer.waitUntilReady(taskId);
-      const raw = await voicer.downloadResult(taskId);
+      let raw: Buffer;
+      try {
+        raw = await voicer.downloadResult(taskId);
+      } catch (e: any) {
+        await appendLog(jobId, `Скачивание озвучки оборвалось (Voicer task ${taskId} готов на их сервере, можно нажать «Собрать ролик» ещё раз — оплата уже снята): ${e?.message ?? e}`);
+        throw e;
+      }
 
       // Сохраняем озвучку в постоянное место проекта (не в jobs/)
       const voiceDir = path.join(projectDir(job.project.id, job.project.folderName), 'voice');
@@ -160,8 +166,11 @@ export async function runJob(jobId: string): Promise<void> {
     });
 
     const silences = await getSilences(job.projectId, job.project.folderName);
-    if (silences.length > 0) {
-      await appendLog(jobId, `Найдено пауз в озвучке: ${silences.length} (привязка границ сцен)`);
+    const wordTsForTiming = getWordTimestamps(job.projectId, job.project.folderName);
+    if (wordTsForTiming && wordTsForTiming.length > 0) {
+      await appendLog(jobId, `Тайминги слов: ${wordTsForTiming.length} (точная привязка картинок к голосу)`);
+    } else if (silences.length > 0) {
+      await appendLog(jobId, `Тайминги слов недоступны, использую паузы: ${silences.length}`);
     }
 
     const timing = computeSceneDurations(
@@ -171,6 +180,7 @@ export async function runJob(jobId: string): Promise<void> {
       })),
       total,
       silences,
+      wordTsForTiming as any,
     );
     const durations = timing.durations;
     await Promise.all(
@@ -242,8 +252,10 @@ export async function runJob(jobId: string): Promise<void> {
 
     await setStep(jobId, `Рендер сцен (0/${toRender})`, job.projectId);
     let renderedCount = 0;
+    let failedCount = 0;
     let next = 0;
     const cores = Math.max(1, Math.min(os.cpus().length, toRender || 1));
+    const failedScenes: number[] = [];
     const worker = async () => {
       for (;;) {
         const i = next++;
@@ -255,20 +267,31 @@ export async function runJob(jobId: string): Promise<void> {
           ? buildZoomFilter(zoomPreset, nFrames, resolved.zoomIntensities[i], w, h, fps,
               resolved.zoomSpeeds[i], resolved.zoomEasings[i], resolved.zoomFocusX[i], resolved.zoomFocusY[i], resolved.zoomShakes[i])
           : staticFilter(w, h);
-        await renderSceneClip({
-          imagePath: abs(scenes[i].imagePath!),
-          outPath: clipPaths[i],
-          w, h, fps,
-          durationSec: clipLens[i],
-          vf,
-          zoom: !!zoomPreset,
-          quality,
-        });
-        renderedCount += 1;
-        await setStep(jobId, `Рендер сцен (${renderedCount}/${toRender})`, job.projectId);
+        try {
+          await renderSceneClip({
+            imagePath: abs(scenes[i].imagePath!),
+            outPath: clipPaths[i],
+            w, h, fps,
+            durationSec: clipLens[i],
+            vf,
+            zoom: !!zoomPreset,
+            quality,
+          });
+          renderedCount += 1;
+        } catch (e: any) {
+          // Не валим весь джоб из-за одной сцены — пропускаем, логируем.
+          // Иначе на проектах из 200+ сцен один битый PNG зависает весь рендер.
+          failedCount += 1;
+          failedScenes.push(i);
+          await appendLog(jobId, `Сцена #${i + 1} не отрендерилась: ${e?.message ?? e}`);
+        }
+        await setStep(jobId, `Рендер сцен (${renderedCount}/${toRender}${failedCount ? `, ошибок ${failedCount}` : ''})`, job.projectId);
       }
     };
     await Promise.all(Array.from({ length: cores }, worker));
+    if (failedScenes.length > 0) {
+      throw new Error(`Не удалось отрендерить ${failedScenes.length} сцен (номера: ${failedScenes.map((i) => i + 1).join(', ')}). Открой сцены и проверь картинки.`);
+    }
 
     // Save hashes to SceneResult for audit
     await Promise.all(
@@ -325,6 +348,10 @@ export async function runJob(jobId: string): Promise<void> {
     const tDur = transOn ? p.transitionDuration : 0;
 
     const rawPath = path.join(outDir, `video-${stamp}-raw.mp4`);
+    // Прогресс сшивки в реальном времени — парсим time=… из stderr ffmpeg.
+    // Дроссель: апдейтим step не чаще 1 раза в секунду (DB не любит spam).
+    let lastProgressEmit = 0;
+    const stitchLabel = transOn ? 'Сшивка с переходами' : 'Сшивка ролика';
     await stitchClips({
       clips: clipPaths.map((cp, i) => ({ path: cp, durationSec: clipLens[i] })),
       audioPath: finalAudioPath,
@@ -334,6 +361,20 @@ export async function runJob(jobId: string): Promise<void> {
       transitions: tSeq,
       transitionDur: tDur,
       workDir: jobDir,
+      onProgress: (doneSec, totalSec) => {
+        const now = Date.now();
+        if (now - lastProgressEmit < 1000) return;
+        lastProgressEmit = now;
+        const pct = Math.min(99, Math.round((doneSec / totalSec) * 100));
+        const fmt = (s: number) => {
+          const m = Math.floor(s / 60);
+          const r = Math.floor(s % 60);
+          return `${m}:${r.toString().padStart(2, '0')}`;
+        };
+        const label = `${stitchLabel} · ${pct}% · ${fmt(doneSec)} / ${fmt(totalSec)}`;
+        // fire-and-forget: setStep async, но мы не ждём
+        setStep(jobId, label, job.projectId).catch(() => {});
+      },
     });
 
     // Пост-обработка: субтитры + грейдинг (grain/vignette/LUT/цветокоррекция)
@@ -341,8 +382,25 @@ export async function runJob(jobId: string): Promise<void> {
                   ((p as any).ccSaturation ?? 0) !== 0 || ((p as any).ccTemperature ?? 0) !== 0;
     const hasCta = await prisma.ctaOverlay.count({ where: { projectId: job.projectId } }) > 0;
     const allCtaItems = await prisma.ctaOverlay.findMany({ where: { projectId: job.projectId }, orderBy: { timeSec: 'asc' } });
-    const needsGrading = p.grainEnabled || p.vignetteEnabled || p.lutFile || p.subtitlesEnabled || hasCC || hasCta;
+    // Если есть текстовые оверлеи — они тоже идут через ASS-пост-проход,
+    // т.е. нам нужен грейдинг-стейдж даже без других эффектов.
+    const hasTextOverlays = await prisma.overlay.count({ where: { projectId: job.projectId, type: 'text' } }) > 0;
+    const needsGrading = p.grainEnabled || p.vignetteEnabled || p.lutFile || p.subtitlesEnabled || hasCC || hasCta || hasTextOverlays;
     let finalPath: string;
+
+    // Универсальный builder колбэка прогресса. Получает имя шага и общую
+    // длительность ролика — рисует «N% · 0:42 / 18:30» с дросселем 1 раз/сек.
+    const fmtSec = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+    const makeProgress = (label: string) => {
+      let last = 0;
+      return (doneSec: number) => {
+        const now = Date.now();
+        if (now - last < 1000) return;
+        last = now;
+        const pct = Math.min(99, Math.round((doneSec / Math.max(total, 1)) * 100));
+        setStep(jobId, `${label} · ${pct}% · ${fmtSec(doneSec)} / ${fmtSec(total)}`, job.projectId).catch(() => {});
+      };
+    };
 
     if (needsGrading) {
       await setStep(jobId, 'Пост-обработка', job.projectId);
@@ -427,6 +485,28 @@ export async function runJob(jobId: string): Promise<void> {
         }
       }
 
+      // Text overlays — тоже ASS. Сливаем их с subsFile ЗАРАНЕЕ, чтобы
+      // пост-обработка прошла одним проходом. Раньше делали два полных
+      // re-encode (грейдинг + текст-оверлеи) → пост-обработка занимала
+      // вдвое дольше нужного.
+      const allOverlaysForMerge = await prisma.overlay.findMany({ where: { projectId: job.projectId }, orderBy: { timeSec: 'asc' } });
+      const textOverlaysForMerge = allOverlaysForMerge.filter((o: any) => o.type === 'text' && o.text);
+      if (textOverlaysForMerge.length > 0) {
+        const { writeOverlayASS } = await import('../lib/subtitles.js');
+        const txtAssFile = writeOverlayASS(textOverlaysForMerge as any, w, h, jobDir);
+        if (txtAssFile) {
+          if (subsFile) {
+            const txtContent = fs.readFileSync(txtAssFile, 'utf-8');
+            const txtEvents = txtContent.split('\n').filter((l) => l.startsWith('Dialogue:'));
+            const subsContent = fs.readFileSync(subsFile, 'utf-8');
+            fs.writeFileSync(subsFile, subsContent.trimEnd() + '\n' + txtEvents.join('\n') + '\n', 'utf-8');
+          } else {
+            subsFile = txtAssFile;
+          }
+          await appendLog(jobId, `Текстовых оверлеев слито в субтитры: ${textOverlaysForMerge.length} (один проход вместо двух)`);
+        }
+      }
+
       finalPath = path.join(outDir, `video-${stamp}.mp4`);
       const lutsDir = path.join(env.DATA_DIR, 'luts');
       await applyGrading(rawPath, finalPath, {
@@ -441,7 +521,7 @@ export async function runJob(jobId: string): Promise<void> {
         ccSaturation: (p as any).ccSaturation ?? 0,
         ccTemperature: (p as any).ccTemperature ?? 0,
         quality,
-      });
+      }, { onProgress: makeProgress('Пост-обработка') });
       fs.rmSync(rawPath, { force: true });
       await appendLog(jobId, 'Пост-обработка применена');
     } else {
@@ -458,7 +538,7 @@ export async function runJob(jobId: string): Promise<void> {
         .filter((o: any) => fs.existsSync(o.filePath));
       if (overlays.length > 0) {
         const ovOut = path.join(outDir, `video-ov-${stamp}.mp4`);
-        await overlayVideos(finalPath, overlays, ovOut);
+        await overlayVideos(finalPath, overlays, ovOut, { onProgress: makeProgress('Наложение видео-оверлеев (CTA)') });
         finalPath = ovOut;
         await appendLog(jobId, `Видео-оверлеев (CTA) наложено: ${overlays.length}`);
       }
@@ -476,24 +556,14 @@ export async function runJob(jobId: string): Promise<void> {
       if (mediaOverlays.length > 0) {
         await setStep(jobId, 'Наложение оверлеев (медиа)', job.projectId);
         const mediaOut = path.join(outDir, `video-overlays-${stamp}.mp4`);
-        await overlayVideos(finalPath, mediaOverlays, mediaOut);
+        await overlayVideos(finalPath, mediaOverlays, mediaOut, { onProgress: makeProgress('Наложение оверлеев (медиа)') });
         finalPath = mediaOut;
         await appendLog(jobId, `Медиа-оверлеев наложено: ${mediaOverlays.length}`);
       }
 
-      // Text overlays → ASS subtitles (burned into video via applyGrading pass)
-      const textOverlays = allOverlays.filter((o: any) => o.type === 'text' && o.text);
-      if (textOverlays.length > 0) {
-        await setStep(jobId, 'Наложение текстовых оверлеев', job.projectId);
-        const { writeOverlayASS } = await import('../lib/subtitles.js');
-        const assFile = writeOverlayASS(textOverlays, w, h, jobDir);
-        if (assFile) {
-          const textOut = path.join(outDir, `video-text-ov-${stamp}.mp4`);
-          await applyGrading(finalPath, textOut, { subtitlesFile: assFile, quality });
-          finalPath = textOut;
-          await appendLog(jobId, `Текстовых оверлеев наложено: ${textOverlays.length}`);
-        }
-      }
+      // Text overlays уже накладываются в applyGrading выше (слиты в ASS).
+      // Здесь делать второй полный re-encode не нужно — это убирало ~30%
+      // времени всей сборки.
     }
 
     await prisma.job.update({

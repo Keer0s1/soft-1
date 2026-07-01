@@ -34,6 +34,13 @@ const IconDays = () => (
   </svg>
 );
 
+const IconProxy = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="6" width="20" height="12" rx="2"/>
+    <line x1="6" y1="12" x2="18" y2="12"/>
+  </svg>
+);
+
 const DOT_COLOR = { green: '#3ecf8e', yellow: '#f5c451', red: '#ff6b6b' };
 const DOT_LABEL = { green: 'работает', yellow: 'тормозит', red: 'недоступен' };
 
@@ -57,33 +64,69 @@ function parseDuration(desc) {
   return null;
 }
 
+// Форматирует время до сброса часового лимита.
+// 1234s → "20:34", 45s → "0:45", null → null.
+function fmtCountdown(resetAt, nowMs) {
+  if (!resetAt || typeof resetAt !== 'number') return null;
+  const left = Math.max(0, Math.round((resetAt - nowMs) / 1000));
+  if (left <= 0) return '0:00';
+  const m = Math.floor(left / 60);
+  const s = left % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 export default function StatusBar() {
   const [status, setStatus] = useState(null);
   const [usage, setUsage] = useState(null);
   const [balance, setBalance] = useState(null);
+  // Тик каждую секунду для живого таймера сброса лимита. Не дёргает API,
+  // только пересчитывает строку «осталось N мин».
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
+    let stopped = false;
     const pull = () => {
-      api.status().then(setStatus).catch(() => setStatus(null));
-      api.usage().then(setUsage).catch(() => setUsage(null));
-      api.voicerBalance().then(setBalance).catch(() => setBalance(null));
+      if (stopped) return;
+      api.status().then((d) => !stopped && setStatus(d)).catch(() => !stopped && setStatus(null));
+      api.usage().then((d) => !stopped && setUsage(d)).catch(() => !stopped && setUsage(null));
+      api.voicerBalance().then((d) => !stopped && setBalance(d)).catch(() => !stopped && setBalance(null));
     };
     pull();
-    const s = setInterval(() => api.status().then(setStatus).catch(() => {}), 20_000);
+    // Status — раз в 20с. Usage — каждые 10с, чтобы цифры сразу падали
+    // после генерации картинок. На бэке кеш 5с, инвалидируется по событию.
+    const s = setInterval(() => api.status().then((d) => !stopped && setStatus(d)).catch(() => {}), 20_000);
     const u = setInterval(() => {
-      api.usage().then(setUsage).catch(() => {});
-      api.voicerBalance().then(setBalance).catch(() => {});
-    }, 60_000);
-    return () => { clearInterval(s); clearInterval(u); };
+      if (document.visibilityState !== 'visible') return; // не дёргать в фоне
+      api.usage().then((d) => !stopped && setUsage(d)).catch(() => {});
+      api.voicerBalance().then((d) => !stopped && setBalance(d)).catch(() => {});
+    }, 10_000);
+    const tick = setInterval(() => !stopped && setNowMs(Date.now()), 1000);
+    // Когда вкладка снова видна — сразу подтянем свежее.
+    const onVis = () => { if (document.visibilityState === 'visible') pull(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      stopped = true;
+      clearInterval(s); clearInterval(u); clearInterval(tick);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, []);
 
   const fgHealth = status?.fastgen?.health ?? null;
   const voHealth = status?.voicer?.health ?? null;
+  const proxyOn  = !!status?.proxy?.enabled;
+  const proxyHost = status?.proxy?.host;
 
-  // fast-gen: лимит картинок/час и токенов/час
-  const credits = usage?.credits ?? usage?.images?.limit ?? null;
-  const tokens  = usage?.tokens ?? usage?.promptTokensLimit ?? null;
-  const days    = usage?.daysLeft ?? null;
+  // fast-gen: картинки used/limit + сброс. Старые проекты могут ещё иметь
+  // только usage.credits (плоский лимит без used), поэтому fallback’имся.
+  const imgUsed   = usage?.images?.used ?? null;
+  const imgLimit  = usage?.images?.limit ?? usage?.credits ?? null;
+  const imgReset  = usage?.images?.resetAt ?? null;
+  const tokens    = usage?.tokens ?? usage?.promptTokensLimit ?? null;
+  const days      = usage?.daysLeft ?? null;
+
+  const imgRemaining = imgLimit != null && imgUsed != null ? Math.max(0, imgLimit - imgUsed) : null;
+  const imgCountdown = fmtCountdown(imgReset, nowMs);
+  const imgLow = imgRemaining != null && imgLimit > 0 && imgRemaining / imgLimit <= 0.1;
 
   // Voicer: символы и длительность
   const voChars    = balance?.balance ?? null;
@@ -105,10 +148,42 @@ export default function StatusBar() {
 
       {fgHealth && <span className="sb-sep" />}
 
-      {/* Лимит картинок в час */}
-      <span className="sb-item" title="Лимит генераций картинок в час">
+      {/* Прокси: вкл/выкл — кликабельно, ведёт в настройки */}
+      <a
+        href="/settings"
+        className="sb-item"
+        style={{ textDecoration: 'none', color: 'inherit' }}
+        title={proxyOn ? `Прокси активен · ${proxyHost}` : 'Прокси выключен — если картинки не грузятся, включи его в настройках'}
+      >
+        <IconProxy />
+        <span style={{ color: proxyOn ? '#3ecf8e' : '#ff6b6b' }}>
+          прокси {proxyOn ? 'вкл' : 'выкл'}
+        </span>
+      </a>
+
+      <span className="sb-sep" />
+
+      {/* Лимит картинок: остаток/лимит + время до сброса */}
+      <span
+        className="sb-item"
+        title={
+          imgLimit != null
+            ? `Картинок осталось ${imgRemaining}/${imgLimit} в этом часе` +
+              (imgCountdown ? ` · сброс через ${imgCountdown}` : '')
+            : 'Лимит генераций картинок в час'
+        }
+      >
         <IconImage />
-        <span>{credits != null ? fmt(credits) : '—'}</span>
+        <span style={imgLow ? { color: '#ff6b6b', fontWeight: 600 } : undefined}>
+          {imgLimit != null && imgUsed != null
+            ? `${fmt(imgRemaining)}/${fmt(imgLimit)}`
+            : (imgLimit != null ? fmt(imgLimit) : '—')}
+        </span>
+        {imgCountdown && (
+          <span className="sb-sub" title={`Сброс часового лимита через ${imgCountdown}`}>
+            ↻ {imgCountdown}
+          </span>
+        )}
       </span>
 
       {/* Лимит токенов промтов в час */}

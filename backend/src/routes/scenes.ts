@@ -8,7 +8,7 @@ import { generateVoicePreview, getWordTimestamps, getSilences } from '../service
 import { assemblyBlockReason } from '../services/pipeline.js';
 import { runVideoPreview } from '../services/videoPreview.js';
 import { taskQueue } from '../lib/taskQueue.js';
-import { createSceneSchema, updateSceneSchema, reorderScenesSchema, genImageSchema, uploadImageSchema, setActiveImageSchema, batchUpdateScenesSchema } from '../schemas.js';
+import { createSceneSchema, updateSceneSchema, reorderScenesSchema, genImageSchema, uploadImageSchema, setActiveImageSchema, batchUpdateScenesSchema, uploadAudioSchema } from '../schemas.js';
 
 export const scenesRouter = Router();
 
@@ -211,9 +211,10 @@ scenesRouter.post('/projects/:id/scenes/:sceneId/upload', async (req, res) => {
 
 // Загрузить свою озвучку (mp3/wav). Заменяет AI-озвучку — будет использоваться при сборке.
 scenesRouter.post('/projects/:id/voice-upload', async (req, res) => {
+  const parsed = uploadAudioSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   try {
-    const dataUri = String(req.body?.dataUri ?? '');
-    const m = /^data:audio\/[\w+]+;base64,(.+)$/s.exec(dataUri);
+    const m = /^data:audio\/[\w+]+;base64,(.+)$/s.exec(parsed.data.dataUri);
     if (!m) return res.status(400).json({ error: 'Ожидается audio в формате data:audio/...;base64,...' });
     const bytes = Buffer.from(m[1], 'base64');
     const project = await prisma.project.findUnique({ where: { id: req.params.id } });
@@ -241,9 +242,10 @@ scenesRouter.delete('/projects/:id/voice-custom', async (req, res) => {
 
 // Загрузить фоновую музыку с компа. body: { dataUri: "data:audio/...;base64,..." }
 scenesRouter.post('/projects/:id/music', async (req, res) => {
+  const parsed = uploadAudioSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   try {
-    const dataUri = String(req.body?.dataUri ?? '');
-    const m = /^data:audio\/[\w+]+;base64,(.+)$/s.exec(dataUri);
+    const m = /^data:audio\/[\w+]+;base64,(.+)$/s.exec(parsed.data.dataUri);
     if (!m) return res.status(400).json({ error: 'Ожидается audio в формате data:audio/...;base64,...' });
     const bytes = Buffer.from(m[1], 'base64');
     const project = await prisma.project.findUnique({ where: { id: req.params.id } });

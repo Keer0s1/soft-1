@@ -167,15 +167,41 @@ export async function saveConfig(patch: Partial<ProxyConfig>): Promise<ProxyConf
   return { ...current };
 }
 
-/** fetch с учётом текущего прокси (если включён). */
+/** Построить агенты (dispatcher для undici + http.Agent для node:https) для
+ *  ПЕРЕДАННОЙ конфигурации, не трогая глобальное состояние. Используется для
+ *  per-request override (например, проверка прокси из админ-UI). */
+export function buildAgents(cfg: ProxyConfig): { dispatcher: Dispatcher | null; httpsAgent: HttpAgent | null } {
+  if (!cfg.enabled || !cfg.host) return { dispatcher: null, httpsAgent: null };
+  const url = buildUrl(cfg);
+  if (cfg.protocol === 'socks5') {
+    return {
+      dispatcher: makeSocksDispatcher(cfg),
+      httpsAgent: new SocksProxyAgent(url) as unknown as HttpAgent,
+    };
+  }
+  return {
+    dispatcher: new ProxyAgent({ uri: url }),
+    httpsAgent: new HttpsProxyAgent(url) as unknown as HttpAgent,
+  };
+}
+
+/** fetch с учётом прокси. Если передан override — используется он
+ *  (без мутации глобального состояния), иначе текущий конфиг. */
 export async function proxyFetch(
   input: string | URL,
   init: any = {},
+  override?: { dispatcher?: Dispatcher | null },
 ): Promise<Response> {
-  if (dispatcher) {
-    return (undiciFetch as any)(input, { ...init, dispatcher }) as unknown as Response;
+  const disp = override ? override.dispatcher : dispatcher;
+  if (disp) {
+    return (undiciFetch as any)(input, { ...init, dispatcher: disp }) as unknown as Response;
   }
   return fetch(input, init);
+}
+
+/** true если прокси сейчас активен (для UI/диагностики). */
+export function isActive(): boolean {
+  return Boolean(dispatcher);
 }
 
 /** http.Agent для node:https.request (используется в fastgen storage-download). */

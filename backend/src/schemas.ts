@@ -132,4 +132,28 @@ export const setActiveImageSchema = z.object({
 export const parseFilesSchema = z.object({
   speechText: z.string().max(1_000_000),
   promptsText: z.string().max(1_000_000),
+  bigStory: z.boolean().optional(),
+});
+
+// Аудио: до ~150 МБ как base64 data-URI. Длинные озвучки бывают 50-100 МБ mp3.
+export const uploadAudioSchema = z.object({
+  dataUri: z.string().regex(/^data:audio\//).max(200_000_000),
+});
+
+// SFX / CTA / overlays могут быть аудио или изображения. Имя — короткое и
+// безопасное, без слешей и без «..».
+const SAFE_NAME = /^[^\\/\x00\r\n]+$/;
+export const uploadSfxSchema = z.object({
+  dataUri: z.string().regex(/^data:audio\//).max(50_000_000),
+  name: z.string().min(1).max(200).regex(SAFE_NAME).refine((n) => n !== '..' && n !== '.', 'имя файла недопустимо'),
+});
+
+export const uploadCtaImageSchema = z.object({
+  dataUri: z.string().regex(/^data:image\//).max(20_000_000),
+  name: z.string().min(1).max(200).regex(SAFE_NAME).refine((n) => n !== '..' && n !== '.', 'имя файла недопустимо'),
+});
+
+export const uploadOverlaySchema = z.object({
+  dataUri: z.string().regex(/^data:(image|audio|video)\//).max(200_000_000),
+  name: z.string().min(1).max(200).regex(SAFE_NAME).refine((n) => n !== '..' && n !== '.', 'имя файла недопустимо'),
 });

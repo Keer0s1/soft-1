@@ -107,12 +107,45 @@ export async function waitUntilReady(
   }
 }
 
-/** Скачать результат (MP3, либо ZIP с чанками). Возвращает сырые байты. */
+/** Скачать результат (MP3, либо ZIP с чанками). Возвращает сырые байты.
+ *
+ *  Большие mp3 (10+ МБ) часто рвутся посреди потока, когда трафик идёт через
+ *  прокси — undici в таком случае бросает «fetch failed». На сервере Voicer
+ *  задача в этот момент уже завершена (status=ending_processed) — значит
+ *  файл лежит и его можно качать сколько угодно раз. Делаем 5 попыток
+ *  с прогрессивной задержкой + явный таймаут на ответ. */
 export async function downloadResult(taskId: number): Promise<Buffer> {
   ensureConfigured();
-  const r = await proxyFetch(`${env.VOICER_API_URL}/tasks/${taskId}/result`, { headers: headers() });
-  if (!r.ok) throw new VoicerError(`Voicer /result: ${r.status}`);
-  return Buffer.from(await r.arrayBuffer());
+  const attempts = 5;
+  let lastErr: any = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const r = await proxyFetch(
+        `${env.VOICER_API_URL}/tasks/${taskId}/result`,
+        { headers: headers(), signal: AbortSignal.timeout(120_000) },
+      );
+      if (!r.ok) {
+        // 4xx — повторять бесполезно
+        if (r.status >= 400 && r.status < 500) {
+          throw new VoicerError(`Voicer /result: ${r.status}`);
+        }
+        lastErr = new VoicerError(`Voicer /result: ${r.status}`);
+      } else {
+        return Buffer.from(await r.arrayBuffer());
+      }
+    } catch (e: any) {
+      lastErr = e;
+      // 4xx внутри VoicerError выше — пробрасываем без ретрая.
+      if (e instanceof VoicerError && /\b(40[0-9]|41[0-9]|42[0-9])\b/.test(e.message)) {
+        throw e;
+      }
+    }
+    if (i < attempts - 1) {
+      await sleep(2000 * (i + 1));
+    }
+  }
+  const msg = lastErr?.cause?.code || lastErr?.code || lastErr?.message || String(lastErr);
+  throw new VoicerError(`Voicer: не удалось скачать озвучку после ${attempts} попыток: ${msg}`);
 }
 
 export interface WordTimestamp {

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { computeSceneDurations } from './sceneTiming.js';
 
-export function useTimelineState(scenes, silences = []) {
+export function useTimelineState(scenes, silences = [], words = null) {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -20,6 +20,7 @@ export function useTimelineState(scenes, silences = []) {
     scenes.map((s) => ({ voiceText: s.voiceText, durationOverride: s.durationOverride })),
     totalAudio,
     silences,
+    words,
   );
   const sceneDurations = timing.durations;
   const boundaries = timing.boundaries;

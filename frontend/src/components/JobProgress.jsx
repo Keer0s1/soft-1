@@ -4,7 +4,8 @@ import { api } from '../api.js';
 const ACTIVE = new Set(['queued', 'running']);
 
 // Опрашивает статус запуска раз в 2с, показывает прогресс, лог и готовое видео.
-export default function JobProgress({ jobId, onDone }) {
+// liveStep — текущий шаг из WebSocket-события job:step, обновляется мгновенно.
+export default function JobProgress({ jobId, liveStep, onDone }) {
   const [job, setJob] = useState(null);
   const timer = useRef(null);
 
@@ -40,7 +41,7 @@ export default function JobProgress({ jobId, onDone }) {
   return (
     <div className="panel job">
       <div className="job-head">
-        <strong>{job.step || job.status}</strong>
+        <strong>{liveStep || job.step || job.status}</strong>
         <span className={`tag tag-${job.status}`}>{job.status}</span>
       </div>
 

@@ -8,6 +8,7 @@ import { useTimelineState } from '../useTimelineState.js';
 import { toast } from '../components/Toast.jsx';
 import JobProgress from '../components/JobProgress.jsx';
 import ImportDialog from '../components/ImportDialog.jsx';
+import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import SceneCard from '../components/SceneCard.jsx';
 import EffectsPanel from '../components/EffectsPanel.jsx';
 import InteractiveTimeline from '../components/InteractiveTimeline.jsx';
@@ -31,7 +32,9 @@ export default function EditorPage() {
   const [luts, setLuts] = useState([]);
   const [musicList, setMusicList] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
+  const [jobStep, setJobStep] = useState('');
   const [showImport, setShowImport] = useState(false);
+  const [sceneToDelete, setSceneToDelete] = useState(null);
   const [fxSceneId, setFxSceneId] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
@@ -39,21 +42,31 @@ export default function EditorPage() {
   const [block, setBlock] = useState({ canAssemble: false, blockReason: 'Загрузка…' });
   const [vpVersion, setVpVersion] = useState(0);
   const [silences, setSilences] = useState([]);
+  const [wordTs, setWordTs] = useState([]);
   const pollRef = useRef(null);
+  const vpPollRef = useRef(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const timeline = useTimelineState(scenes, silences);
+  const timeline = useTimelineState(scenes, silences, wordTs.length ? wordTs : null);
 
   // WebSocket — мгновенные обновления вместо поллинга
   useSocket(id, {
     'scene:image:done': () => refreshStatus(),
     'scene:image:error': () => refreshStatus(),
-    'job:step': ({ step }) => setActiveJobStep?.(step),
-    'job:done': () => { setActiveJob(null); load(); toast('Ролик собран!', 'success'); },
-    'job:error': ({ error }) => { setActiveJob(null); load(); toast(error || 'Ошибка сборки', 'error'); },
+    'job:step': ({ step }) => setJobStep(step || ''),
+    'job:done': () => { setActiveJob(null); setJobStep(''); load(); toast('Ролик собран!', 'success'); },
+    'job:error': ({ error }) => { setActiveJob(null); setJobStep(''); load(); toast(error || 'Ошибка сборки', 'error'); },
     'voice:preview:done': () => { load(); loadSilences(); },
     'voice:preview:error': ({ error }) => { load(); toast(error || 'Ошибка озвучки', 'error'); },
-    'videoPreview:done': () => { load(); setVpVersion(v => v + 1); },
-    'videoPreview:error': ({ error }) => { load(); if (error) toast(error, 'error'); },
+    'videoPreview:done': () => {
+      if (vpPollRef.current) { clearInterval(vpPollRef.current); vpPollRef.current = null; }
+      load();
+      setVpVersion(v => v + 1);
+    },
+    'videoPreview:error': ({ error }) => {
+      if (vpPollRef.current) { clearInterval(vpPollRef.current); vpPollRef.current = null; }
+      load();
+      if (error) toast(error, 'error');
+    },
     'videoPreview:progress': ({ percent, step }) => setProject(p => p ? { ...p, videoPreviewStatus: 'rendering', _vpPercent: percent || 0, _vpStep: step || '' } : p),
   });
 
@@ -67,6 +80,10 @@ export default function EditorPage() {
       const list = await api.voiceSilences(id);
       setSilences(Array.isArray(list) ? list : []);
     } catch { setSilences([]); }
+    try {
+      const ts = await api.voiceTimestamps(id);
+      setWordTs(Array.isArray(ts) ? ts : []);
+    } catch { setWordTs([]); }
   }
   useEffect(() => {
     load();
@@ -112,6 +129,11 @@ export default function EditorPage() {
     return () => {};
   }, [anyPending]);
   useEffect(() => () => clearInterval(pollRef.current), []);
+  // Чистим интервал пререндера видео на unmount (важно: ДО early return,
+  // чтобы порядок хуков не зависел от готовности project)
+  useEffect(() => () => {
+    if (vpPollRef.current) { clearInterval(vpPollRef.current); vpPollRef.current = null; }
+  }, []);
   // первичная загрузка статуса сборки
   useEffect(() => {
     if (scenes.length) refreshStatus();
@@ -147,20 +169,29 @@ export default function EditorPage() {
 
   async function renderVideoPreview() {
     setProject(p => p ? { ...p, videoPreviewStatus: 'rendering', _vpPercent: 0 } : p);
-    api.videoPreview(id).catch(() => {});
-    // Poll until done
-    const poll = setInterval(async () => {
+    try {
+      await api.videoPreview(id);
+    } catch (e) {
+      setProject(p => p ? { ...p, videoPreviewStatus: 'error' } : p);
+      toast(e.message || 'Не удалось запустить пререндер', 'error');
+      return;
+    }
+    // Подстраховка на случай если WS не дойдёт — поллим раз в 2 сек.
+    // Сокетные события videoPreview:done/error всё равно остановят раньше.
+    if (vpPollRef.current) clearInterval(vpPollRef.current);
+    vpPollRef.current = setInterval(async () => {
       try {
         const p = await api.getProject(id);
         if (p.videoPreviewStatus === 'done' || p.videoPreviewStatus === 'error') {
-          clearInterval(poll);
+          clearInterval(vpPollRef.current);
+          vpPollRef.current = null;
           setProject(p);
           setScenes(p.scenes);
           setVpVersion(v => v + 1);
         } else {
           setProject(prev => prev ? { ...prev, _vpPercent: p._vpPercent || prev._vpPercent } : prev);
         }
-      } catch {}
+      } catch { /* network blip — продолжим на след. тике */ }
     }, 2000);
   }
 
@@ -169,8 +200,14 @@ export default function EditorPage() {
     setScenes((arr) => [...arr, s]);
   }
   async function removeScene(sceneId) {
-    await api.deleteScene(id, sceneId);
-    setScenes((arr) => arr.filter((s) => s.id !== sceneId));
+    try {
+      await api.deleteScene(id, sceneId);
+      setScenes((arr) => arr.filter((s) => s.id !== sceneId));
+    } catch (e) {
+      toast(e.message || 'Не удалось удалить сцену', 'error');
+    } finally {
+      setSceneToDelete(null);
+    }
   }
   async function moveScene(i, dir) {
     const j = i + dir;
@@ -184,16 +221,26 @@ export default function EditorPage() {
   async function generateAll() {
     setError('');
     setGenerating(true);
-    await api.genMissingImages(id);
-    setScenes((arr) =>
-      arr.map((s) => (s.imageStatus === 'none' || s.imageStatus === 'error' ? { ...s, imageStatus: 'pending' } : s)),
-    );
+    try {
+      await api.genMissingImages(id);
+      setScenes((arr) =>
+        arr.map((s) => (s.imageStatus === 'none' || s.imageStatus === 'error' ? { ...s, imageStatus: 'pending' } : s)),
+      );
+    } catch (e) {
+      setGenerating(false);
+      toast(e.message || 'Не удалось запустить генерацию', 'error');
+    }
   }
 
   async function cancelGeneration() {
-    await api.cancelImages(id);
-    setGenerating(false);
-    await refreshStatus();
+    try {
+      await api.cancelImages(id);
+    } catch (e) {
+      toast(e.message || 'Не удалось отменить', 'error');
+    } finally {
+      setGenerating(false);
+      await refreshStatus();
+    }
   }
 
   async function retryErrors() {
@@ -414,7 +461,7 @@ export default function EditorPage() {
                     index={i}
                     total={scenes.length}
                     onMove={(dir) => moveScene(i, dir)}
-                    onDelete={() => removeScene(s.id)}
+                    onDelete={() => setSceneToDelete(s)}
                     onChanged={() => markPending(s.id)}
                     onRefresh={load}
                     effects={effects}
@@ -526,7 +573,7 @@ export default function EditorPage() {
           {activeJob && (
             <>
               <h2>Сборка</h2>
-              <JobProgress jobId={activeJob} onDone={() => load()} />
+              <JobProgress jobId={activeJob} liveStep={jobStep} onDone={() => load()} />
             </>
           )}
 
@@ -643,6 +690,17 @@ export default function EditorPage() {
             setShowImport(false);
             await load();
           }}
+        />
+      )}
+
+      {sceneToDelete && (
+        <ConfirmDialog
+          title="Удалить сцену?"
+          message={`Сцена «${(sceneToDelete.voiceText || sceneToDelete.imagePrompt || '').slice(0, 80) || 'без названия'}» и её картинки будут удалены безвозвратно.`}
+          confirmLabel="Удалить"
+          danger
+          onConfirm={() => removeScene(sceneToDelete.id)}
+          onCancel={() => setSceneToDelete(null)}
         />
       )}
     </div>

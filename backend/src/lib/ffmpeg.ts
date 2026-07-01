@@ -3,6 +3,7 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 import ffmpegPath from 'ffmpeg-static';
@@ -14,17 +15,99 @@ const FFPROBE = ffprobeStatic.path || 'ffprobe';
 
 const posix = (p: string) => p.split(path.sep).join('/');
 
-function run(bin: string, args: string[], errPrefix: string, cwd?: string): Promise<string> {
+/**
+ * Запуск ffmpeg/ffprobe. Тайминги управляются «watchdog’ом» по
+ * прогрессу stderr, а не жёстким таймаутом — иначе долгая сшивка
+ * большого ролика (10+ минут) убивается по середине, хотя
+ * ffmpeg бодро пишет «speed=3.43x».
+ *
+ * @param hardTimeoutMs абсолютный максимум (для подстраховки). 0 = без лимита.
+ * @param idleTimeoutMs «нет прогресса» — если stderr молчит дольше этого, kill.
+ *   Подходит и для коротких сцен (зависания), и для длинной сшивки.
+ */
+// Парсер «time=00:10:01.54» из stderr ffmpeg → секунды
+function parseFfmpegTime(stderr: string): number | null {
+  const m = /time=(\d+):(\d+):(\d+(?:\.\d+)?)/g.exec(stderr.slice(-2000));
+  if (!m) return null;
+  const last = stderr.slice(-2000).match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g);
+  if (!last) return null;
+  const tail = last[last.length - 1];
+  const mm = /time=(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(tail);
+  if (!mm) return null;
+  return Number(mm[1]) * 3600 + Number(mm[2]) * 60 + Number(mm[3]);
+}
+
+function run(
+  bin: string,
+  args: string[],
+  errPrefix: string,
+  cwd?: string,
+  opts: { hardTimeoutMs?: number; idleTimeoutMs?: number; onProgress?: (sec: number) => void } = {},
+): Promise<string> {
+  const hardTimeoutMs = opts.hardTimeoutMs ?? 0;       // 0 = без жёсткого лимита
+  // 15 минут молчания — ffmpeg на больших xfade-цепочках/субтитрах может
+  // надолго уйти в фильтр и не писать в stderr. Раньше было 2 минуты и
+  // оно убивало процесс посреди реального рендера.
+  const idleTimeoutMs = opts.idleTimeoutMs ?? 900_000;
   return new Promise((resolve, reject) => {
-    const proc = spawn(bin, args, cwd ? { cwd } : undefined);
+    // stdio: stdin закрыт, чтобы ffmpeg не ждал ввода и не висел.
+    const proc = spawn(bin, args, {
+      ...(cwd ? { cwd } : {}),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     let stdout = '';
     let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += d.toString()));
-    proc.stderr.on('data', (d) => (stderr += d.toString()));
-    proc.on('error', (e) => reject(new Error(`${errPrefix}: ${e.message}`)));
+    let killReason: string | null = null;
+    let lastProgressSec = -1;
+
+    let idleTimer: NodeJS.Timeout | null = null;
+    const resetIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        killReason = `нет прогресса ${Math.round(idleTimeoutMs / 1000)}с`;
+        try { proc.kill('SIGKILL'); } catch {}
+      }, idleTimeoutMs);
+    };
+    resetIdle();
+
+    const hardTimer = hardTimeoutMs > 0
+      ? setTimeout(() => {
+          killReason = `жёсткий таймаут ${Math.round(hardTimeoutMs / 1000)}с`;
+          try { proc.kill('SIGKILL'); } catch {}
+        }, hardTimeoutMs)
+      : null;
+
+    proc.stdout?.on('data', (d) => {
+      stdout += d.toString();
+      resetIdle();
+    });
+    proc.stderr?.on('data', (d) => {
+      stderr += d.toString();
+      if (stderr.length > 500_000) stderr = stderr.slice(-200_000);
+      resetIdle();
+      if (opts.onProgress) {
+        const sec = parseFfmpegTime(stderr);
+        if (sec != null && sec > lastProgressSec) {
+          lastProgressSec = sec;
+          try { opts.onProgress(sec); } catch { /* колбэк не должен ломать рендер */ }
+        }
+      }
+    });
+    proc.on('error', (e) => {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      reject(new Error(`${errPrefix}: ${e.message}`));
+    });
     proc.on('close', (code) => {
-      if (code === 0) resolve(stdout);
-      else reject(new Error(`${errPrefix}: ${stderr.slice(-1200)}`));
+      if (idleTimer) clearTimeout(idleTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      if (killReason) {
+        reject(new Error(`${errPrefix}: процесс убит (${killReason}). Последние строки stderr: ${stderr.slice(-800)}`));
+      } else if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(`${errPrefix}: ${stderr.slice(-1200)}`));
+      }
     });
   });
 }
@@ -240,11 +323,15 @@ export interface StitchOpts {
   transitions: string[] | null;
   transitionDur: number;
   workDir: string;
+  /** Колбэк прогресса: получает (готово_сек, всего_сек) при каждом обновлении. */
+  onProgress?: (doneSec: number, totalSec: number) => void;
 }
 
 /** Сшить клипы в финальный ролик (с переходами или встык) + добавить звук. */
 export async function stitchClips(o: StitchOpts): Promise<void> {
   const n = o.clips.length;
+  const totalSec = o.clips.reduce((a, c) => a + c.durationSec, 0)
+    - (o.transitions ? o.transitions.length * o.transitionDur : 0);
 
   // Без переходов или одна сцена — быстрый concat со stream-copy
   if (!o.transitions || o.transitions.length === 0 || n === 1) {
@@ -255,30 +342,50 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
       ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-i', o.audioPath,
         '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
       'ffmpeg не смог склеить клипы',
+      undefined,
+      { onProgress: (sec) => o.onProgress?.(sec, Math.max(totalSec, 1)) },
     );
     return;
   }
 
-  // Цепочка xfade. При >30 сценах — разбиваем на чанки для скорости.
+  // Цепочка xfade. Размер чанка — компромисс между скоростью и памятью.
+  // ffmpeg в xfade-графе держит ОДНОВРЕМЕННО декодеры всех инпутов чанка
+  // → большие чанки = большой расход RAM, упор в swap, диск тормозит видео.
+  // 12 клипов на чанк — комфортно для 16-32 ГБ RAM на 1080p.
   const t = o.transitionDur;
-  const CHUNK = 30;
+  const CHUNK = 12;
 
   if (n <= CHUNK) {
-    await stitchChunk(o.clips, o.transitions!, t, o.audioPath, o.outPath, o.quality, o.workDir);
+    await stitchChunk(o.clips, o.transitions!, t, o.audioPath, o.outPath, o.quality, o.workDir, {
+      onProgress: (sec) => o.onProgress?.(sec, Math.max(totalSec, 1)),
+    });
   } else {
-    // Разбиваем на чанки, склеиваем каждый с xfade, потом concat
+    // Разбиваем на чанки, склеиваем каждый с xfade, потом concat.
+    // Делаем СТРОГО последовательно: каждый чанк открывает 30 видео-декодеров
+    // и держит xfade-граф в памяти, параллельный запуск нескольких чанков
+    // быстро съедает RAM и упирается в swap (диск, не CPU/GPU).
     const chunkDir = path.join(o.workDir, '_chunks');
     fs.mkdirSync(chunkDir, { recursive: true });
     const chunkPaths: string[] = [];
+    let chunkOffsetSec = 0; // прогресс предыдущих завершённых чанков
     for (let start = 0; start < n; start += CHUNK) {
       const end = Math.min(start + CHUNK, n);
       const chunkClips = o.clips.slice(start, end);
       const chunkTrans = o.transitions!.slice(start, end - 1);
       const chunkOut = path.join(chunkDir, `chunk_${chunkPaths.length}.mp4`);
-      await stitchChunk(chunkClips, chunkTrans, t, null, chunkOut, o.quality, chunkDir);
+      const thisChunkDur = chunkClips.reduce((a, c) => a + c.durationSec, 0)
+        - chunkTrans.length * t;
+      await stitchChunk(chunkClips, chunkTrans, t, null, chunkOut, o.quality, chunkDir, {
+        onProgress: (sec) => {
+          o.onProgress?.(chunkOffsetSec + sec, Math.max(totalSec, 1));
+        },
+      });
+      chunkOffsetSec += thisChunkDur;
+      // Сообщаем «чанк готов» — на случай если последний tick не дошёл
+      o.onProgress?.(chunkOffsetSec, Math.max(totalSec, 1));
       chunkPaths.push(chunkOut);
     }
-    // Concat чанки + аудио
+    // Concat чанки + аудио — быстрый stream-copy, прогресс не критичен
     const listPath = path.join(o.workDir, 'chunks.txt');
     fs.writeFileSync(listPath, chunkPaths.map((c) => `file '${posix(c)}'`).join('\n') + '\n');
     await run(
@@ -299,6 +406,7 @@ async function stitchChunk(
   outPath: string,
   quality: QualitySettings,
   workDir: string,
+  opts: { onProgress?: (sec: number) => void } = {},
 ): Promise<void> {
   const n = clips.length;
   if (n === 1) {
@@ -343,11 +451,19 @@ async function stitchChunk(
     ? ['-map', '[vout]', '-map', `${n}:a`, '-c:a', 'aac', '-b:a', '192k', '-shortest']
     : ['-map', '[vout]'];
 
+  // Используем настроенный кодек (NVENC/QSV/AMF) — иначе на проектах с
+  // переходами всё считается на CPU, и на 200 сценах сшивка занимает
+  // десятки минут.
+  // -threads 0 — пусть ffmpeg сам решает (обычно cores).
+  // -filter_threads / -filter_complex_threads оставляем дефолт: на xfade-графе
+  // с 12 инпутами больше потоков = больше памяти на фрейм-буферы.
   await run(
     FFMPEG,
     ['-y', ...inputs, '-filter_complex_script', fcPath, ...mapArgs,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(quality.crf), '-pix_fmt', 'yuv420p', outPath],
+      ...videoCodecArgs(quality), outPath],
     'ffmpeg не смог собрать чанк с переходами',
+    undefined,
+    { onProgress: opts.onProgress },
   );
   fs.rmSync(linksDir, { recursive: true, force: true });
 }
@@ -368,12 +484,20 @@ export interface GradingOpts {
   quality: QualitySettings;
 }
 
-export async function applyGrading(inputPath: string, outputPath: string, opts: GradingOpts): Promise<void> {
+export async function applyGrading(
+  inputPath: string,
+  outputPath: string,
+  opts: GradingOpts,
+  cb?: { onProgress?: (sec: number) => void },
+): Promise<void> {
   const filters: string[] = [];
 
   if (opts.lutFile && fs.existsSync(opts.lutFile)) {
     const relLut = path.relative(process.cwd(), opts.lutFile).split(path.sep).join('/');
-    filters.push(`lut3d=${relLut}:interp=tetrahedral`);
+    // trilinear вместо tetrahedral — быстрее в 1.5-2× при минимальной
+    // визуальной разнице на ютуб-роликах. Tetrahedral хорош для кино-грейда,
+    // нам важна скорость.
+    filters.push(`lut3d=${relLut}:interp=trilinear`);
   }
 
   // Цветокоррекция (eq фильтр)
@@ -397,7 +521,9 @@ export async function applyGrading(inputPath: string, outputPath: string, opts: 
   }
   if (opts.grainEnabled) {
     const s = Math.min(25, Math.max(1, opts.grainIntensity ?? 8));
-    filters.push(`noise=c0s=${s}:c0f=t+u:c1s=${Math.round(s * 0.3)}:c1f=t+u`);
+    // c0f=t только (без u) — генерация шума по времени, без uniform-распределения
+    // на кадр. Даёт 2-3× ускорение фильтра.
+    filters.push(`noise=c0s=${s}:c0f=t:c1s=${Math.round(s * 0.3)}:c1f=t`);
   }
   if (opts.vignetteEnabled) {
     const v = Math.min(1.0, Math.max(0.1, opts.vignetteIntensity ?? 0.5));
@@ -414,11 +540,31 @@ export async function applyGrading(inputPath: string, outputPath: string, opts: 
     return;
   }
 
+  // Пост-обработка — самый медленный шаг (полный re-encode видео).
+  // Принудительно гоним на ultrafast preset (libx264) или p1 (nvenc):
+  // визуально разница минимальна на видео из статических картинок с zoom’ом,
+  // а скорость в 3-5 раз выше дефолтного quality.preset='veryfast'.
+  const fastQuality = { ...opts.quality, preset: 'ultrafast' };
+  const codecArgs = videoCodecArgs(fastQuality);
+  // Для nvenc подсунем самый быстрый preset (p1 = быстрее всего)
+  const codecArgsFast = codecArgs.map((a, i) =>
+    i > 0 && codecArgs[i - 1] === '-preset' && a !== 'ultrafast' ? 'p1' : a,
+  );
   const vf = filters.join(',');
+  // -threads 0 (auto = все ядра) и -filter_threads — раздаём фильтры
+  // на все ядра, иначе ASS/LUT тащит видео на одном ядре.
+  const cores = Math.max(2, os.cpus().length);
   await run(
     FFMPEG,
-    ['-y', '-i', inputPath, '-vf', vf, ...videoCodecArgs(opts.quality), '-c:a', 'copy', outputPath],
+    [
+      '-y', '-threads', '0', '-filter_threads', String(cores),
+      '-filter_complex_threads', String(cores),
+      '-i', inputPath, '-vf', vf,
+      ...codecArgsFast, '-c:a', 'copy', outputPath,
+    ],
     'ffmpeg не смог применить грейдинг',
+    undefined,
+    { onProgress: cb?.onProgress },
   );
 }
 
@@ -499,7 +645,12 @@ export interface VideoOverlay {
 }
 
 /** Overlay video files (with alpha) on top of base video at specific times/positions. */
-export async function overlayVideos(basePath: string, overlays: VideoOverlay[], outputPath: string): Promise<void> {
+export async function overlayVideos(
+  basePath: string,
+  overlays: VideoOverlay[],
+  outputPath: string,
+  cb?: { onProgress?: (sec: number) => void },
+): Promise<void> {
   if (overlays.length === 0) return;
   const inputs = ['-y', '-i', basePath];
   for (const o of overlays) {
@@ -522,6 +673,12 @@ export async function overlayVideos(basePath: string, overlays: VideoOverlay[], 
     prev = next;
   }
 
-  await run(FFMPEG, [...inputs, '-filter_complex', filters.join(';'), '-map', '[vout]', '-map', '0:a?', '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-shortest', outputPath], 'ffmpeg не смог наложить видео-оверлеи');
+  await run(
+    FFMPEG,
+    [...inputs, '-filter_complex', filters.join(';'), '-map', '[vout]', '-map', '0:a?', '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-shortest', outputPath],
+    'ffmpeg не смог наложить видео-оверлеи',
+    undefined,
+    { onProgress: cb?.onProgress },
+  );
 }
 

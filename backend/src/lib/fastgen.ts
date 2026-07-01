@@ -85,6 +85,7 @@ export async function submitImage(prompt: string, opts: SubmitImageOpts = {}): P
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   if (r.status === 403) throw new FastGenError('fast-gen: 403 — нет активной подписки на изображения');
   if (r.status === 429) throw new FastGenError('fast-gen: 429 — превышен лимит одновременных генераций');
@@ -102,7 +103,10 @@ export async function submitImage(prompt: string, opts: SubmitImageOpts = {}): P
 
 async function getJson(path: string): Promise<any> {
   ensureConfigured();
-  const r = await proxyFetch(`${env.FASTGEN_API_URL}${path}`, { headers: headers() });
+  const r = await proxyFetch(`${env.FASTGEN_API_URL}${path}`, {
+    headers: headers(),
+    signal: AbortSignal.timeout(20_000),
+  });
   if (!r.ok) throw new FastGenError(`fast-gen ${path}: ${r.status}`);
   return r.json();
 }
@@ -130,6 +134,7 @@ export async function getGeneration(generationId: string): Promise<any> {
   ensureConfigured();
   const r = await proxyFetch(`${env.FASTGEN_API_URL}/api/v6/generations/${generationId}`, {
     headers: headers(),
+    signal: AbortSignal.timeout(20_000),
   });
   if (!r.ok) throw new FastGenError(`fast-gen /generations: ${r.status}`);
   return r.json();
