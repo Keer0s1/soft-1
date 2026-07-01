@@ -38,6 +38,7 @@ export async function computePreviewHash(projectId: string): Promise<string> {
     scenes: scenes.map(s => ({ ip: s.imagePath, vt: s.voiceText, eo: s.effectOverrides, d: s.durationOverride })),
     z: [project.zoomEnabled, project.zoomIntensity, project.zoomPresets],
     t: [project.transitionEnabled, project.transitionDuration, project.transitionPresets],
+    min: (project as any).minSceneDurationSec ?? 1.5,
     g: [project.grainEnabled, project.grainIntensity, project.vignetteEnabled, project.vignetteIntensity, project.lutFile],
     cc: [(project as any).ccBrightness, (project as any).ccContrast, (project as any).ccSaturation, (project as any).ccTemperature],
     s: [project.subtitlesEnabled, project.subtitlesStyle, project.subtitlesFontSize, (project as any).subtitlesColor,
@@ -86,6 +87,33 @@ export async function runVideoPreview(projectId: string): Promise<void> {
       const override = s.durationOverride as number | null;
       return override != null && override > 0 ? override : (total * charCounts[i]) / totalChars;
     });
+
+    // Мин-хольд: не даём коротким сценам мельтешить (защита от «спиннера»).
+    const minSec = (project as any).minSceneDurationSec ?? 1.5;
+    const isOverride = scenes.map(s => {
+      const o = s.durationOverride as number | null;
+      return o != null && o > 0;
+    });
+    // Слева направо: короткая сцена забирает у следующей.
+    for (let i = 0; i < durations.length - 1; i++) {
+      if (isOverride[i]) continue;
+      if (durations[i] < minSec) {
+        const need = minSec - durations[i];
+        const giveable = isOverride[i + 1] ? 0 : Math.max(0, durations[i + 1] - minSec);
+        const give = Math.min(need, giveable);
+        durations[i] += give;
+        durations[i + 1] -= give;
+      }
+    }
+    // Последняя короткая — забирает у предыдущей.
+    const last = durations.length - 1;
+    if (last > 0 && !isOverride[last] && durations[last] < minSec) {
+      const need = minSec - durations[last];
+      const giveable = isOverride[last - 1] ? 0 : Math.max(0, durations[last - 1] - minSec);
+      const give = Math.min(need, giveable);
+      durations[last] += give;
+      durations[last - 1] -= give;
+    }
 
     // Resolve effects
     const scenesForResolve = scenes.map(s => ({ effectOverrides: s.effectOverrides as EffectOverrides | null }));

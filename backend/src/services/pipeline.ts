@@ -181,6 +181,7 @@ export async function runJob(jobId: string): Promise<void> {
       total,
       silences,
       wordTsForTiming as any,
+      (job.project as any).minSceneDurationSec ?? 1.5,
     );
     const durations = timing.durations;
     await Promise.all(

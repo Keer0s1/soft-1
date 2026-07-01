@@ -3,25 +3,29 @@
 // по символам + привязка к паузам. Логика идентична бэку, чтобы превью
 // и финальное видео совпадали.
 
-const MIN_SCENE_SEC = 1.2;
+const DEFAULT_MIN_SCENE_SEC = 1.5;
 const MIN_SILENCE_TO_SPLIT = 0.15;
 const LONG_PAUSE_SEC = 0.8;
 
 const normWord = (s) => String(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 const sceneWords = (text) => String(text).split(/\s+/).map(normWord).filter(Boolean);
 
-export function computeSceneDurations(scenes, totalAudio, silences = [], words = null) {
+export function computeSceneDurations(scenes, totalAudio, silences = [], words = null, minSceneDurationSec = DEFAULT_MIN_SCENE_SEC) {
   const n = scenes.length;
   if (n === 0) return { durations: [], boundaries: [0], matchedSilences: [] };
 
+  const minSec = Number.isFinite(minSceneDurationSec) && minSceneDurationSec > 0
+    ? minSceneDurationSec
+    : DEFAULT_MIN_SCENE_SEC;
+
   if (words && words.length > 0 && totalAudio > 0) {
-    const aligned = alignByWords(scenes, totalAudio, words);
+    const aligned = alignByWords(scenes, totalAudio, words, minSec);
     if (aligned) return aligned;
   }
-  return alignBySilences(scenes, totalAudio, silences);
+  return alignBySilences(scenes, totalAudio, silences, minSec);
 }
 
-function alignByWords(scenes, totalAudio, words) {
+function alignByWords(scenes, totalAudio, words, minSceneSec) {
   const n = scenes.length;
   const overrides = scenes.map((s) =>
     s.durationOverride != null && s.durationOverride > 0 ? s.durationOverride : null,
@@ -101,7 +105,7 @@ function alignByWords(scenes, totalAudio, words) {
   }
 
   applyOverrides(boundaries, overrides, totalAudio);
-  enforceMinDuration(boundaries, overrides);
+  enforceMinDuration(boundaries, overrides, minSceneSec);
 
   const durations = boundaries.slice(1).map((b, i) => b - boundaries[i]);
   return { durations, boundaries, matchedSilences: new Array(n - 1).fill(null) };
@@ -145,31 +149,31 @@ function applyOverrides(boundaries, overrides, totalAudio) {
   }
 }
 
-function enforceMinDuration(boundaries, overrides) {
+function enforceMinDuration(boundaries, overrides, minSec) {
   const n = overrides.length;
   for (let i = 0; i < n - 1; i++) {
     if (overrides[i] != null) continue;
     const dur = boundaries[i + 1] - boundaries[i];
-    if (dur < MIN_SCENE_SEC) {
-      const need = MIN_SCENE_SEC - dur;
+    if (dur < minSec) {
+      const need = minSec - dur;
       const nextDur = boundaries[i + 2] - boundaries[i + 1];
-      const giveable = overrides[i + 1] != null ? 0 : Math.max(0, nextDur - MIN_SCENE_SEC);
+      const giveable = overrides[i + 1] != null ? 0 : Math.max(0, nextDur - minSec);
       boundaries[i + 1] += Math.min(need, giveable);
     }
   }
   const last = n - 1;
   if (last > 0 && overrides[last] == null) {
     const dur = boundaries[last + 1] - boundaries[last];
-    if (dur < MIN_SCENE_SEC) {
-      const need = MIN_SCENE_SEC - dur;
+    if (dur < minSec) {
+      const need = minSec - dur;
       const prevDur = boundaries[last] - boundaries[last - 1];
-      const giveable = overrides[last - 1] != null ? 0 : Math.max(0, prevDur - MIN_SCENE_SEC);
+      const giveable = overrides[last - 1] != null ? 0 : Math.max(0, prevDur - minSec);
       boundaries[last] -= Math.min(need, giveable);
     }
   }
 }
 
-function alignBySilences(scenes, totalAudio, silences) {
+function alignBySilences(scenes, totalAudio, silences, minSceneSec) {
   const n = scenes.length;
   const overrides = scenes.map((s) =>
     s.durationOverride != null && s.durationOverride > 0 ? s.durationOverride : null,
@@ -239,5 +243,7 @@ function alignBySilences(scenes, totalAudio, silences) {
   const finalBoundaries = [0];
   let acc2 = 0;
   for (const d of durations) { acc2 += d; finalBoundaries.push(acc2); }
-  return { durations, boundaries: finalBoundaries, matchedSilences: matched };
+  enforceMinDuration(finalBoundaries, overrides, minSceneSec);
+  const finalDurations = finalBoundaries.slice(1).map((b, i) => b - finalBoundaries[i]);
+  return { durations: finalDurations, boundaries: finalBoundaries, matchedSilences: matched };
 }

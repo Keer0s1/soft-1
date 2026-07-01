@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { computeSceneDurations } from './sceneTiming.js';
 
-export function useTimelineState(scenes, silences = [], words = null) {
+export function useTimelineState(scenes, silences = [], words = null, minSceneDurationSec = 1.5) {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -21,6 +21,7 @@ export function useTimelineState(scenes, silences = [], words = null) {
     totalAudio,
     silences,
     words,
+    minSceneDurationSec,
   );
   const sceneDurations = timing.durations;
   const boundaries = timing.boundaries;

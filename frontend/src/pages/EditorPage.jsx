@@ -46,7 +46,7 @@ export default function EditorPage() {
   const pollRef = useRef(null);
   const vpPollRef = useRef(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const timeline = useTimelineState(scenes, silences, wordTs.length ? wordTs : null);
+  const timeline = useTimelineState(scenes, silences, wordTs.length ? wordTs : null, project?.minSceneDurationSec ?? 1.5);
 
   // WebSocket — мгновенные обновления вместо поллинга
   useSocket(id, {

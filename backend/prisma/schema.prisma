@@ -35,6 +35,11 @@ model Project {
   transitionPresets  Json    @default("[\"fade\",\"dissolve\",\"smoothleft\",\"circleopen\",\"fadeblack\"]")
   renderQuality      String  @default("balance") // fast | balance | quality
 
+  // Минимальная длительность одной сцены (сек). Если фраза короче — картинка
+  // всё равно висит этот минимум, время добирается за счёт соседних сцен.
+  // Помогает при перечислениях, где отдельные слова слишком короткие.
+  minSceneDurationSec Float  @default(1.5)
+
   // Кинематографические оверлеи
   grainEnabled       Boolean @default(false)
   grainIntensity     Float   @default(8)    // 1–25

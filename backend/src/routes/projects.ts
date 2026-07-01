@@ -81,6 +81,7 @@ projectsRouter.patch('/:id', async (req, res) => {
   if (b.transitionDuration !== undefined) data.transitionDuration = b.transitionDuration;
   if (b.transitionPresets !== undefined) data.transitionPresets = b.transitionPresets;
   if (b.renderQuality !== undefined) data.renderQuality = b.renderQuality;
+  if (b.minSceneDurationSec !== undefined) data.minSceneDurationSec = b.minSceneDurationSec;
   // Grading
   if (b.grainEnabled !== undefined) data.grainEnabled = b.grainEnabled;
   if (b.grainIntensity !== undefined) data.grainIntensity = b.grainIntensity;

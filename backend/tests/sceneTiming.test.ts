@@ -101,7 +101,7 @@ describe('computeSceneDurations — выравнивание по словам',
       ['спасибо', 3.9, 4.5],
       ['большое', 4.5, 5.1],
     );
-    const r = computeSceneDurations(scenes, 5.3, [], words);
+    const r = computeSceneDurations(scenes, 5.3, [], words, 1.2);
     // граница 1↔2: gap=0.5с (1.2→1.7) → cut = 1.2 + 0.25 = 1.45
     expect(r.boundaries[1]).toBeCloseTo(1.45, 1);
     // граница 2↔3: gap=0.4с (3.0→3.4) → cut = 3.0 + 0.2 = 3.2

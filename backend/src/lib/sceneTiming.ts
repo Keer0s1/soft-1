@@ -11,11 +11,13 @@
 //   3) Длинная пауза (>= LONG_PAUSE_SEC) полностью остаётся в текущей сцене:
 //      дыхание/вдохи между фразами клеятся К ПРЕДЫДУЩЕЙ. Картинка не висит
 //      «пустой» в начале следующей сцены.
-//   4) Минимальная длительность сцены — MIN_SCENE_SEC (1.2с). Если фраза
-//      слишком короткая — добираем за счёт следующей паузы.
+//   4) Минимальная длительность сцены — настраивается через minSceneDurationSec
+//      (по умолчанию 1.5с). Если фраза слишком короткая — добираем за счёт
+//      соседних сцен. Помогает при перечислениях, когда отдельные слова длятся
+//      долю секунды и картинки мельтешат.
 //
 // Fallback (без word_timestamps): пропорция по длине voiceText (как раньше)
-// + старая привязка границ к паузам с окном ±25%.
+// + старая привязка границ к паузам с окном ±25%. Минимум тоже применяется.
 //
 // durationOverride пользователя имеет абсолютный приоритет.
 
@@ -42,7 +44,7 @@ export interface SceneTimingResult {
   matchedSilences: (SilenceRange | null)[]; // длина = scenes.length - 1
 }
 
-const MIN_SCENE_SEC = 1.2;
+const DEFAULT_MIN_SCENE_SEC = 1.5;
 const MIN_SILENCE_TO_SPLIT = 0.15;
 const LONG_PAUSE_SEC = 0.8;
 
@@ -58,24 +60,30 @@ const sceneWords = (text: string): string[] =>
  * @param totalAudio  Общая длительность аудио (с). 0 = нет аудио (фолбэк-бюджет).
  * @param silences    Найденные паузы в аудио.
  * @param words       Пословные тайминги Воксера. Если есть — основной режим.
+ * @param minSceneDurationSec Минимум длительности сцены (сек). По умолчанию 1.5.
  */
 export function computeSceneDurations(
   scenes: SceneTimingInput[],
   totalAudio: number,
   silences: SilenceRange[] = [],
   words: WordTs[] | null = null,
+  minSceneDurationSec: number = DEFAULT_MIN_SCENE_SEC,
 ): SceneTimingResult {
   const n = scenes.length;
   if (n === 0) return { durations: [], boundaries: [0], matchedSilences: [] };
 
+  const minSec = Number.isFinite(minSceneDurationSec) && minSceneDurationSec > 0
+    ? minSceneDurationSec
+    : DEFAULT_MIN_SCENE_SEC;
+
   // Если есть пословные тайминги и аудио — пытаемся выровнять по словам.
   if (words && words.length > 0 && totalAudio > 0) {
-    const aligned = alignByWords(scenes, totalAudio, words);
+    const aligned = alignByWords(scenes, totalAudio, words, minSec);
     if (aligned) return aligned;
   }
 
   // Fallback: пропорция по символам + привязка к паузам.
-  return alignBySilences(scenes, totalAudio, silences);
+  return alignBySilences(scenes, totalAudio, silences, minSec);
 }
 
 /**
@@ -87,6 +95,7 @@ function alignByWords(
   scenes: SceneTimingInput[],
   totalAudio: number,
   words: WordTs[],
+  minSceneSec: number,
 ): SceneTimingResult | null {
   const n = scenes.length;
   const overrides = scenes.map((s) =>
@@ -193,9 +202,9 @@ function alignByWords(
   // Применим override-сцены (фиксированная длительность сжимает соседей).
   applyOverrides(boundaries, overrides, totalAudio);
 
-  // Минимальная длительность 1.2с: если сцена слишком короткая, заберём
+  // Минимальная длительность: если сцена слишком короткая, заберём
   // у следующей (а в конце — у предыдущей).
-  enforceMinDuration(boundaries, overrides);
+  enforceMinDuration(boundaries, overrides, minSceneSec);
 
   const durations = boundaries.slice(1).map((b, i) => b - boundaries[i]);
   return { durations, boundaries, matchedSilences: new Array(n - 1).fill(null) };
@@ -250,16 +259,17 @@ function applyOverrides(
 function enforceMinDuration(
   boundaries: number[],
   overrides: (number | null)[],
+  minSec: number,
 ): void {
   const n = overrides.length;
-  // Проход слева направо: если сцена короче MIN, заберём у следующей.
+  // Проход слева направо: если сцена короче минимума, заберём у следующей.
   for (let i = 0; i < n - 1; i++) {
     if (overrides[i] != null) continue;
     const dur = boundaries[i + 1] - boundaries[i];
-    if (dur < MIN_SCENE_SEC) {
-      const need = MIN_SCENE_SEC - dur;
+    if (dur < minSec) {
+      const need = minSec - dur;
       const nextDur = boundaries[i + 2] - boundaries[i + 1];
-      const giveable = overrides[i + 1] != null ? 0 : Math.max(0, nextDur - MIN_SCENE_SEC);
+      const giveable = overrides[i + 1] != null ? 0 : Math.max(0, nextDur - minSec);
       const give = Math.min(need, giveable);
       boundaries[i + 1] += give;
     }
@@ -268,10 +278,10 @@ function enforceMinDuration(
   const last = n - 1;
   if (last > 0 && overrides[last] == null) {
     const dur = boundaries[last + 1] - boundaries[last];
-    if (dur < MIN_SCENE_SEC) {
-      const need = MIN_SCENE_SEC - dur;
+    if (dur < minSec) {
+      const need = minSec - dur;
       const prevDur = boundaries[last] - boundaries[last - 1];
-      const giveable = overrides[last - 1] != null ? 0 : Math.max(0, prevDur - MIN_SCENE_SEC);
+      const giveable = overrides[last - 1] != null ? 0 : Math.max(0, prevDur - minSec);
       boundaries[last] -= Math.min(need, giveable);
     }
   }
@@ -282,6 +292,7 @@ function alignBySilences(
   scenes: SceneTimingInput[],
   totalAudio: number,
   silences: SilenceRange[],
+  minSceneSec: number,
 ): SceneTimingResult {
   const n = scenes.length;
   const overrides = scenes.map((s) =>
@@ -351,5 +362,9 @@ function alignBySilences(
   let acc2 = 0;
   for (const d of durations) { acc2 += d; finalBoundaries.push(acc2); }
 
-  return { durations, boundaries: finalBoundaries, matchedSilences: matched };
+  // Мин-хольд: заимствуем у соседей чтобы короткие сцены не мельтешили.
+  enforceMinDuration(finalBoundaries, overrides, minSceneSec);
+  const finalDurations = finalBoundaries.slice(1).map((b, i) => b - finalBoundaries[i]);
+
+  return { durations: finalDurations, boundaries: finalBoundaries, matchedSilences: matched };
 }

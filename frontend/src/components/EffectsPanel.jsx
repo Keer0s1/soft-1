@@ -161,6 +161,21 @@ export default function EffectsPanel({ project, effects, onPatch, sampleA, sampl
         )}
       </div>
 
+      {/* Тайминг сцен */}
+      <div className="fx-section">
+        <div className="fx-head">
+          <b>⏱ Тайминг сцен</b>
+          <label className="fx-slider">
+            Мин. длительность кадра: {(project.minSceneDurationSec ?? 1.5).toFixed(1)}с
+            <input type="range" min="0.5" max="3.0" step="0.1" value={project.minSceneDurationSec ?? 1.5}
+              onChange={(e) => onPatch({ minSceneDurationSec: Number(e.target.value) })} />
+          </label>
+        </div>
+        <div className="muted small">
+          Если сцена короче — картинка всё равно висит этот минимум. Помогает при перечислениях, где отдельные слова длятся долю секунды и картинки мельтешат. Ручной durationOverride на сцену имеет приоритет.
+        </div>
+      </div>
+
       {/* Цветокоррекция */}
       <div className="fx-section">
         <div className="fx-head">

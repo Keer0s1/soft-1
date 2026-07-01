@@ -24,6 +24,7 @@ export const updateProjectSchema = z.object({
   transitionDuration: z.number().min(0.1).max(2).optional(),
   transitionPresets: z.array(z.string().max(30)).max(40).optional(),
   renderQuality: z.enum(RENDER_QUALITIES).optional(),
+  minSceneDurationSec: z.number().min(0.3).max(10).optional(),
   // Grading
   grainEnabled: z.boolean().optional(),
   grainIntensity: z.number().min(1).max(25).optional(),
