@@ -151,7 +151,10 @@ function applyOverrides(boundaries, overrides, totalAudio) {
 
 function enforceMinDuration(boundaries, overrides, minSec) {
   const n = overrides.length;
-  // Мягкий проход: забрать у соседей если у них есть запас
+  // Только мягкий проход — забрать у соседей если у них есть запас. Сдвиг
+  // всех последующих границ вправо (жёсткий проход) ломал синхрон с аудио:
+  // голос уходил вперёд от картинки. Мельтешение при подряд коротких сценах
+  // допустимо, а десинхрон — нет.
   for (let i = 0; i < n - 1; i++) {
     if (overrides[i] != null) continue;
     const dur = boundaries[i + 1] - boundaries[i];
@@ -170,18 +173,6 @@ function enforceMinDuration(boundaries, overrides, minSec) {
       const prevDur = boundaries[last] - boundaries[last - 1];
       const giveable = overrides[last - 1] != null ? 0 : Math.max(0, prevDur - minSec);
       boundaries[last] -= Math.min(need, giveable);
-    }
-  }
-  // Жёсткий проход: если запаса не нашлось (соседи тоже коротышки), раздвигаем
-  // границы вправо. Видео станет длиннее аудио — под последними кадрами тишина.
-  for (let i = 0; i < n; i++) {
-    if (overrides[i] != null) continue;
-    const dur = boundaries[i + 1] - boundaries[i];
-    if (dur < minSec) {
-      const shift = minSec - dur;
-      for (let j = i + 1; j < boundaries.length; j++) {
-        boundaries[j] += shift;
-      }
     }
   }
 }

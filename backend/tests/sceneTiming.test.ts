@@ -151,9 +151,11 @@ describe('computeSceneDurations — выравнивание по словам',
     expect(r.boundaries[1]).toBeCloseTo(2.15, 1);
   });
 
-  it('перечисление коротких сцен: жёсткий минимум растягивает видео', () => {
+  it('перечисление коротких сцен подряд: сохраняем синхрон с аудио, а не min-hold', () => {
     // 5 сцен по 1 слову ~0.3с — все короткие подряд, забрать не у кого.
-    // Жёсткий проход должен растянуть каждую до min, общее видео станет 5*min.
+    // Мягкий проход не может растянуть (у соседей нет запаса). Сохраняем
+    // синхрон с аудио: длительности остаются короткими, сумма == totalAudio.
+    // Мельтешение допустимо, десинхрон — нет.
     const scenes = [
       { voiceText: 'орехи' },
       { voiceText: 'батарейки' },
@@ -168,14 +170,14 @@ describe('computeSceneDurations — выравнивание по словам',
       ['мыло',      1.2, 1.5],
       ['крем',      1.5, 1.8],
     );
-    const min = 1.7;
-    const r = computeSceneDurations(scenes, 1.8, [], words, min);
-    for (const d of r.durations) {
-      expect(d).toBeGreaterThanOrEqual(min - 1e-6);
-    }
-    // Общая длина видео — минимум 5 * 1.7 = 8.5с (аудио было 1.8с)
+    const r = computeSceneDurations(scenes, 1.8, [], words, 1.7);
     const total = r.durations.reduce((a, b) => a + b, 0);
-    expect(total).toBeGreaterThanOrEqual(5 * min - 1e-6);
+    // Общее видео == длине аудио (± мелкая погрешность): синхрон сохранён
+    expect(total).toBeCloseTo(1.8, 1);
+    // Границы монотонные
+    for (let i = 1; i < r.boundaries.length; i++) {
+      expect(r.boundaries[i]).toBeGreaterThanOrEqual(r.boundaries[i - 1]);
+    }
   });
 
   it('минималка 1.2с: короткая фраза тянет время у соседа', () => {

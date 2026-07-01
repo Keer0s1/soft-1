@@ -90,10 +90,9 @@ export async function runVideoPreview(projectId: string): Promise<void> {
       return override != null && override > 0 ? override : (total * charCounts[i]) / totalChars;
     });
 
-    // Мин-хольд: не даём коротким сценам мельтешить (защита от «спиннера»).
-    // Мягкий проход — забираем у соседей. Жёсткий — если у соседей тоже нет
-    // запаса, растягиваем каждую короткую сцену до min (видео станет длиннее
-    // аудио, но зато картинки не мельтешат).
+    // Мин-хольд: забираем у соседей если у них есть запас. Жёсткий сдвиг
+    // (растягивать сцену за счёт общей длины видео) отключён — он ломал
+    // синхрон с аудио. Если подряд короткие сцены — они останутся короткими.
     const minSec = (project as any).minSceneDurationSec ?? 1.5;
     const isOverride = scenes.map(s => {
       const o = s.durationOverride as number | null;
@@ -116,13 +115,6 @@ export async function runVideoPreview(projectId: string): Promise<void> {
       const give = Math.min(need, giveable);
       durations[last] += give;
       durations[last - 1] -= give;
-    }
-    // Жёсткий проход
-    for (let i = 0; i < durations.length; i++) {
-      if (isOverride[i]) continue;
-      if (durations[i] < minSec) {
-        durations[i] = minSec;
-      }
     }
 
     // Resolve effects
