@@ -49,6 +49,10 @@ function run(
   // надолго уйти в фильтр и не писать в stderr. Раньше было 2 минуты и
   // оно убивало процесс посреди реального рендера.
   const idleTimeoutMs = opts.idleTimeoutMs ?? 900_000;
+
+  // Отладка: при ошибке будем знать полную команду
+  const cmdLine = `${bin} ${args.join(' ')}`;
+
   return new Promise((resolve, reject) => {
     // stdio: stdin закрыт, чтобы ffmpeg не ждал ввода и не висел.
     const proc = spawn(bin, args, {
@@ -106,7 +110,7 @@ function run(
       } else if (code === 0) {
         resolve(stdout);
       } else {
-        reject(new Error(`${errPrefix}: ${stderr.slice(-1200)}`));
+        reject(new Error(`${errPrefix}:\nCMD: ${cmdLine.slice(0, 2000)}\nSTDERR: ${stderr.slice(-1200)}`));
       }
     });
   });
@@ -177,7 +181,7 @@ export async function detectSilences(
   return ranges.filter((r) => r.duration >= minDuration);
 }
 
-/** Проверить что mp4 валидный (есть moov-атом, читается ffprobe). */
+/** Проверить что mp4 валидный (есть moov-атом, видеопоток с кадрами). */
 export async function isValidVideo(file: string): Promise<boolean> {
   if (!fs.existsSync(file)) return false;
   try {
@@ -185,13 +189,14 @@ export async function isValidVideo(file: string): Promise<boolean> {
     if (st.size < 1024) return false;
   } catch { return false; }
   try {
-    await run(
+    const out = await run(
       FFPROBE,
-      ['-v', 'error', '-select_streams', 'v:0', '-show_entries',
-        'stream=codec_type', '-of', 'csv=p=0', file],
+      ['-v', 'error', '-select_streams', 'v:0', '-count_packets',
+        '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', file],
       'invalid',
     );
-    return true;
+    const packets = parseInt(out.trim(), 10);
+    return packets > 0;
   } catch {
     return false;
   }
@@ -293,11 +298,22 @@ export interface SceneClipOpts {
 
 /** Отрендерить одну сцену в отдельный mp4-клип (без звука). */
 export async function renderSceneClip(o: SceneClipOpts): Promise<void> {
+  if (o.durationSec <= 0) {
+    throw new Error(`Длительность сцены ≤ 0 (${o.durationSec.toFixed(3)}с) — невозможно отрендерить`);
+  }
+  if (!fs.existsSync(o.imagePath)) {
+    throw new Error(`Картинка не найдена: ${o.imagePath}`);
+  }
+  const imgStat = fs.statSync(o.imagePath);
+  if (imgStat.size < 100) {
+    throw new Error(`Картинка повреждена (${imgStat.size} байт): ${o.imagePath}`);
+  }
+  const minDur = Math.max(o.durationSec, 1 / o.fps);
   const vf = `${o.vf},format=yuv420p`;
   const tmpPath = o.outPath + '.tmp.mp4';
   try { fs.unlinkSync(tmpPath); } catch {}
   const args = ['-y'];
-  if (!o.zoom) args.push('-loop', '1', '-t', o.durationSec.toFixed(3));
+  if (!o.zoom) args.push('-loop', '1', '-t', minDur.toFixed(3));
   args.push('-i', o.imagePath, '-vf', vf, '-r', String(o.fps));
   args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', tmpPath);
   try {
@@ -330,6 +346,21 @@ export interface StitchOpts {
 /** Сшить клипы в финальный ролик (с переходами или встык) + добавить звук. */
 export async function stitchClips(o: StitchOpts): Promise<void> {
   const n = o.clips.length;
+  if (n === 0) throw new Error('Нет клипов для сшивки');
+
+  // Проверяем, что все клипы существуют и не пустые
+  for (let i = 0; i < n; i++) {
+    const cp = o.clips[i].path;
+    if (!fs.existsSync(cp)) throw new Error(`Клип #${i + 1} не найден: ${cp}`);
+    const st = fs.statSync(cp);
+    if (st.size < 1024) throw new Error(`Клип #${i + 1} повреждён (${st.size} байт): ${cp}`);
+  }
+
+  // Проверяем аудио
+  if (!fs.existsSync(o.audioPath)) throw new Error(`Аудиофайл не найден: ${o.audioPath}`);
+  const audioStat = fs.statSync(o.audioPath);
+  if (audioStat.size < 100) throw new Error(`Аудиофайл пуст или повреждён (${audioStat.size} байт): ${o.audioPath}`);
+
   const totalSec = o.clips.reduce((a, c) => a + c.durationSec, 0)
     - (o.transitions ? o.transitions.length * o.transitionDur : 0);
 
@@ -340,7 +371,8 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
     await run(
       FFMPEG,
       ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-i', o.audioPath,
-        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
+        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+        '-t', Math.max(totalSec, 0.1).toFixed(3), o.outPath],
       'ffmpeg не смог склеить клипы',
       undefined,
       { onProgress: (sec) => o.onProgress?.(sec, Math.max(totalSec, 1)) },
@@ -391,7 +423,8 @@ export async function stitchClips(o: StitchOpts): Promise<void> {
     await run(
       FFMPEG,
       ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-i', o.audioPath,
-        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', o.outPath],
+        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+        '-t', Math.max(totalSec, 0.1).toFixed(3), o.outPath],
       'ffmpeg не смог склеить чанки',
     );
     fs.rmSync(chunkDir, { recursive: true, force: true });
@@ -435,7 +468,8 @@ async function stitchChunk(
   let prev = '0:v';
   let acc = clips[0].durationSec;
   for (let i = 1; i < n; i++) {
-    const off = Math.max(0, acc - t).toFixed(3);
+    // offset должен быть >= 0 и дать хотя бы 1 кадр видео до начала перехода
+    const off = Math.max(0.001, acc - t).toFixed(3);
     const outLabel = i === n - 1 ? 'vout' : `v${i}`;
     const trans = transitions[i - 1] ?? 'fade';
     chain += `[${prev}][${i}:v]xfade=transition=${trans}:duration=${t.toFixed(3)}:offset=${off}[${outLabel}];`;
@@ -448,7 +482,7 @@ async function stitchChunk(
   fs.writeFileSync(fcPath, chain, 'utf-8');
 
   const mapArgs = audioPath
-    ? ['-map', '[vout]', '-map', `${n}:a`, '-c:a', 'aac', '-b:a', '192k', '-shortest']
+    ? ['-map', '[vout]', '-map', `${n}:a`, '-c:a', 'aac', '-b:a', '192k']
     : ['-map', '[vout]'];
 
   // Используем настроенный кодек (NVENC/QSV/AMF) — иначе на проектах с
@@ -675,7 +709,7 @@ export async function overlayVideos(
 
   await run(
     FFMPEG,
-    [...inputs, '-filter_complex', filters.join(';'), '-map', '[vout]', '-map', '0:a?', '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-shortest', outputPath],
+    [...inputs, '-filter_complex', filters.join(';'), '-map', '[vout]', '-map', '0:a?', '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', outputPath],
     'ffmpeg не смог наложить видео-оверлеи',
     undefined,
     { onProgress: cb?.onProgress },

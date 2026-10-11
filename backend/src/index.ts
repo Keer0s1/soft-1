@@ -18,9 +18,9 @@ import * as proxy from './lib/proxy.js';
 
 const app = express();
 app.use(cors());
-// Длинная озвучка (mp3 50-100 МБ) после base64 раздувается до ~135 МБ.
-// 200 МБ — компромисс: длинные ролики проходят, но JSON-бомба на полгига не убьёт.
-app.use(express.json({ limit: '200mb' }));
+// Длинная озвучка и импорт сцен с картинками (20+ штук × 10–20 МБ base64)
+// легко дают 300–400 МБ. Ставим 500 МБ — покрывает любой реальный случай.
+app.use(express.json({ limit: '500mb' }));
 
 // API
 app.use('/api/meta', metaRouter);

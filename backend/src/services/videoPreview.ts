@@ -125,7 +125,7 @@ export async function runVideoPreview(projectId: string): Promise<void> {
     // Длительности клипов с overlap для переходов (как в полном рендере)
     const clipLens = durations.map((d, i) => {
       const tDur = transOn && i < resolved.transDurations.length ? resolved.transDurations[i] : 0;
-      return d + tDur;
+      return Math.max(1 / fps, d + tDur);
     });
 
     // Preview clips dir
@@ -213,6 +213,14 @@ export async function runVideoPreview(projectId: string): Promise<void> {
     const stitchHashData = clipPaths.map(p => path.basename(p)).join('|') + `|t:${transOn ? tSeq?.join(',') : 'off'}|d:${tDur}|sfx:${sfxItems.length}|m:${project.bgMusicPath || 'none'}`;
     const stitchHash = crypto.createHash('sha256').update(stitchHashData).digest('hex').slice(0, 12);
     const rawPath = path.join(prevDir, `raw_${stitchHash}.mp4`);
+
+    // Проверяем что кешированный raw валиден (мог остаться пустым от прошлого крэша)
+    if (fs.existsSync(rawPath)) {
+      const { isValidVideo } = await import('../lib/ffmpeg.js');
+      if (!(await isValidVideo(rawPath))) {
+        fs.rmSync(rawPath, { force: true });
+      }
+    }
 
     if (!fs.existsSync(rawPath)) {
       emitToProject(projectId, 'videoPreview:progress', { percent: Math.round((rendered / totalSteps) * 100), step: `Склейка ${scenes.length} клипов...` });

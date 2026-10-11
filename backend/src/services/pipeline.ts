@@ -209,7 +209,7 @@ export async function runJob(jobId: string): Promise<void> {
     // длительность клипа: при переходах добавляем нахлёст, чтобы тайминг не плыл
     const clipLens = durations.map((d, i) => {
       const tDur = transOn && i < resolved.transDurations.length ? resolved.transDurations[i] : 0;
-      return d + tDur;
+      return Math.max(1 / fps, d + tDur);
     });
 
     const clipsDir = path.join(projectDir(job.project.id, job.project.folderName), 'clips');

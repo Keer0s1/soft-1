@@ -4346,3 +4346,51 @@ a.btn.small {
   border: 1px solid var(--rw-hairline);
   display: block;
 }
+
+/* Проверка провайдеров картинок — по одной карточке на провайдера */
+.provider-tests {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.provider-test-card {
+  border: 1px solid var(--rw-hairline);
+  border-radius: var(--rw-rounded-sm);
+  padding: 12px 14px;
+  background: var(--rw-surface, transparent);
+}
+.provider-test-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.provider-test-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+.provider-test-body {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--rw-rounded-sm);
+  background: var(--rw-hairline-soft, rgba(0,0,0,0.03));
+}
+.provider-test-body.is-ok  { border-left: 3px solid var(--green); }
+.provider-test-body.is-err { border-left: 3px solid var(--red); }
+.provider-test-status {
+  flex: 1;
+  font-size: 13px;
+  color: var(--rw-ink);
+  word-break: break-word;
+}
+.provider-test-img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--rw-hairline);
+  flex-shrink: 0;
+}

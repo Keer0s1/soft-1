@@ -8,6 +8,15 @@ const PROTOCOLS = [
   { id: 'socks5', label: 'SOCKS5' },
 ];
 
+// Фолбэк-список провайдеров картинок из fast-gen (docs: /api/v6/capabilities).
+// Используем если бэк не успел отдать /providers через прокси.
+const FALLBACK_PROVIDERS = [
+  { id: 'flow',   label: 'Flow (Google)' },
+  { id: 'flower', label: 'Flower (Nano Banana)' },
+  { id: 'grok',   label: 'Grok' },
+  { id: 'openai', label: 'OpenAI' },
+];
+
 // Парсер строки прокси из буфера обмена.
 // Поддерживаем:
 //   host:port
@@ -64,9 +73,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testingImage, setTestingImage] = useState(false);
   const [testResult, setTestResult] = useState(null);
-  const [imageResult, setImageResult] = useState(null);
   const [savedHasPassword, setSavedHasPassword] = useState(false);
   const [pasteValue, setPasteValue] = useState('');
   const [pasteError, setPasteError] = useState('');
@@ -84,8 +91,11 @@ export default function SettingsPage() {
 
   // Параметры для «Проверить картинкой»
   const [providers, setProviders] = useState([]);
-  const [imgProvider, setImgProvider] = useState('flow');
   const [imgPrompt, setImgPrompt] = useState('cute fluffy kitten sitting on a windowsill, soft light');
+  // Результаты по каждому провайдеру: { flow: {...}, grok: {...} }
+  const [providerResults, setProviderResults] = useState({});
+  // Какой провайдер сейчас тестируется (пусто если ничего не идёт)
+  const [testingId, setTestingId] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -110,9 +120,6 @@ export default function SettingsPage() {
         const r = await api.providers();
         const list = Array.isArray(r?.providers) ? r.providers : [];
         setProviders(list);
-        if (list.length && !list.find((p) => p.id === 'flow')) {
-          setImgProvider(list[0].id);
-        }
       } catch { /* ignore */ }
     })();
   }, []);
@@ -122,7 +129,7 @@ export default function SettingsPage() {
     setOkMsg('');
     setError('');
     setTestResult(null);
-    setImageResult(null);
+    setProviderResults({});
   }
 
   function applyPaste() {
@@ -180,7 +187,7 @@ export default function SettingsPage() {
     setError('');
     setOkMsg('');
     setTestResult(null);
-    setImageResult(null);
+    setProviderResults({});
     try {
       const cfg = await api.proxySave({ enabled: false });
       setForm((f) => ({ ...f, enabled: false }));
@@ -211,7 +218,7 @@ export default function SettingsPage() {
   async function onTest() {
     setTesting(true);
     setTestResult(null);
-    setImageResult(null);
+    setProviderResults({});
     setOkMsg('');
     setError('');
     try {
@@ -224,24 +231,21 @@ export default function SettingsPage() {
     }
   }
 
-  async function onTestImage() {
-    setTestingImage(true);
-    setImageResult(null);
+  async function onTestProvider(providerId) {
+    setTestingId(providerId);
     setTestResult(null);
     setOkMsg('');
     setError('');
     try {
-      // test-image использует ТОЛЬКО сохранённую конфигурацию прокси —
-      // нужно сначала нажать «Сохранить», чтобы тест шёл через нужный прокси.
-      const r = await api.proxyTestImage({
-        provider: imgProvider,
-        prompt: imgPrompt,
-      });
-      setImageResult(r);
+      const r = await api.proxyTestImage({ provider: providerId, prompt: imgPrompt });
+      setProviderResults((prev) => ({ ...prev, [providerId]: r }));
     } catch (e) {
-      setError(`Проверка картинкой не удалась: ${e.message}`);
+      setProviderResults((prev) => ({
+        ...prev,
+        [providerId]: { ok: false, error: e.message, provider: providerId },
+      }));
     } finally {
-      setTestingImage(false);
+      setTestingId('');
     }
   }
 
@@ -393,73 +397,53 @@ export default function SettingsPage() {
           использует именно сохранённую конфигурацию.
         </p>
 
-        <div className="settings-grid">
-          <label className="settings-row">
-            <span className="settings-label">Провайдер</span>
-            <select value={imgProvider} onChange={(e) => setImgProvider(e.target.value)}>
-              {providers.length === 0 && <option value="flow">Flow</option>}
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="settings-row" style={{ gridColumn: 'span 2' }}>
-            <span className="settings-label">Промпт</span>
-            <input
-              type="text"
-              value={imgPrompt}
-              onChange={(e) => setImgPrompt(e.target.value)}
-            />
-          </label>
-        </div>
+        <label className="settings-row" style={{ marginBottom: 18 }}>
+          <span className="settings-label">Промпт</span>
+          <input
+            type="text"
+            value={imgPrompt}
+            onChange={(e) => setImgPrompt(e.target.value)}
+          />
+        </label>
 
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="primary"
-            onClick={onTestImage}
-            disabled={testingImage || !imgPrompt.trim()}
-          >
-            {testingImage ? 'Генерирую…' : 'Сгенерировать тестовую'}
-          </button>
-        </div>
-
-        {imageResult && (
-          <div className="settings-test">
-            <div className="settings-test-title">
-              Результат · {imageResult.via === 'proxy' ? 'через прокси' : 'напрямую'} · {imageResult.provider}
-            </div>
-            <div className={`settings-test-row ${imageResult.ok ? 'is-ok' : 'is-err'}`}>
-              <span className="settings-test-dot" />
-              <span className="settings-test-label">Статус</span>
-              <span className="settings-test-meta">
-                {imageResult.ok
-                  ? `OK · ${Math.round(imageResult.totalMs / 100) / 10}c · ${Math.round(imageResult.imageBytes / 1024)} КБ`
-                  : imageResult.error}
-              </span>
-            </div>
-            {imageResult.ok && (
-              <>
-                <div className="settings-test-row is-ok">
-                  <span className="settings-test-dot" style={{ visibility: 'hidden' }} />
-                  <span className="settings-test-label">Тайминги</span>
-                  <span className="settings-test-meta">
-                    submit {imageResult.submitMs} мс · download {imageResult.downloadMs} мс
-                  </span>
+        <div className="provider-tests">
+          {(providers.length ? providers : FALLBACK_PROVIDERS).map((p) => {
+            const res = providerResults[p.id];
+            const busy = testingId === p.id;
+            const anyBusy = !!testingId;
+            return (
+              <div key={p.id} className="provider-test-card">
+                <div className="provider-test-head">
+                  <div className="provider-test-name">{p.label}</div>
+                  <button
+                    type="button"
+                    className={res?.ok ? 'ghost' : 'primary'}
+                    onClick={() => onTestProvider(p.id)}
+                    disabled={anyBusy || !imgPrompt.trim()}
+                  >
+                    {busy ? 'Генерирую…' : (res ? 'Проверить ещё' : 'Проверить')}
+                  </button>
                 </div>
-                {imageResult.imageDataUri && (
-                  <div style={{ marginTop: 14, textAlign: 'center' }}>
-                    <img
-                      src={imageResult.imageDataUri}
-                      alt="test result"
-                      style={{ maxWidth: 320, maxHeight: 320, borderRadius: 8, border: '1px solid var(--rw-hairline)' }}
-                    />
+                {res && (
+                  <div className={`provider-test-body ${res.ok ? 'is-ok' : 'is-err'}`}>
+                    <div className="provider-test-status">
+                      {res.ok
+                        ? `OK · ${Math.round(res.totalMs / 100) / 10}c · ${Math.round(res.imageBytes / 1024)} КБ · ${res.via === 'proxy' ? 'через прокси' : 'напрямую'}`
+                        : (res.error || 'ошибка')}
+                    </div>
+                    {res.ok && res.imageDataUri && (
+                      <img
+                        src={res.imageDataUri}
+                        alt={p.id}
+                        className="provider-test-img"
+                      />
+                    )}
                   </div>
                 )}
-              </>
-            )}
-          </div>
-        )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

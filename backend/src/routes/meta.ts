@@ -11,6 +11,16 @@ import { ZOOM_PRESETS, TRANSITION_PRESETS } from '../lib/effects.js';
 
 export const metaRouter = Router();
 
+// Троттл повторяющихся ошибок: одно и то же сообщение не чаще раза в 60с.
+const errorLogTimestamps = new Map<string, number>();
+function throttledError(tag: string, msg: string) {
+  const now = Date.now();
+  const last = errorLogTimestamps.get(tag) ?? 0;
+  if (now - last < 60_000) return;
+  errorLogTimestamps.set(tag, now);
+  console.error(`[${tag}] 502: ${msg}`);
+}
+
 metaRouter.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Пресеты эффектов для UI (id + название + ссылка на пример-видео)
@@ -161,6 +171,7 @@ metaRouter.get('/usage', async (_req, res) => {
       window: data.usage_window ?? null,
     });
   } catch (e: any) {
+    throttledError('meta/usage', e?.message ?? e);
     res.status(502).json({ error: String(e?.message ?? e) });
   }
 });
@@ -199,6 +210,7 @@ metaRouter.get('/voicer/balance', async (_req, res) => {
   try {
     res.json(await cached('balance', 30_000, () => voicer.getBalance()));
   } catch (e: any) {
+    throttledError('meta/voicer/balance', e?.message ?? e);
     res.status(502).json({ error: String(e?.message ?? e) });
   }
 });
@@ -208,6 +220,7 @@ metaRouter.get('/voicer/templates', async (_req, res) => {
   try {
     res.json(await cached('templates', 30_000, () => voicer.getTemplates()));
   } catch (e: any) {
+    throttledError('meta/voicer/templates', e?.message ?? e);
     res.status(502).json({ error: String(e?.message ?? e) });
   }
 });

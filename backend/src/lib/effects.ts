@@ -72,7 +72,7 @@ const EASING_FUNCTIONS: Record<string, (n: string) => string> = {
 };
 
 function progressExpr(n: number, speed: number, easing: string): string {
-  const effectiveN = Math.round(n / speed);
+  const effectiveN = Math.max(1, Math.round(n / speed));
   const clamped = `min(on,${effectiveN})`;
   const easingFn = EASING_FUNCTIONS[easing] || EASING_FUNCTIONS.linear;
   return easingFn(String(effectiveN)).replace(/on/g, clamped);

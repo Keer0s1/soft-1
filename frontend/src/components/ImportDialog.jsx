@@ -137,7 +137,29 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
   let countOk;
   let modeNote;
 
-  if (hasImages) {
+  if (hasImages && bigStory) {
+    // «Большая история» с фотками: количество сцен = количество фото,
+    // речь подстраивается автоматически (compress/expand). Промты и речь
+    // сверять не надо.
+    const max = images.length;
+    pairs = Array.from({ length: max }, (_, i) => ({
+      s: sLines[i],
+      p: pLines[i],
+      img: images[i],
+      bad: false,
+    }));
+    countOk = sLines.length > 0 && images.length > 0;
+    if (!sLines.length) {
+      modeNote = `Речей: 0 · Фоток: ${images.length} — добавь речь`;
+    } else if (sLines.length === images.length) {
+      modeNote = `Речей: ${sLines.length} · Фоток: ${images.length}` +
+        (pLines.length ? ` · Промтов: ${pLines.length}` : '') + ' — совпадает ✓';
+    } else if (sLines.length < images.length) {
+      modeNote = `Речей: ${sLines.length} · Фоток: ${images.length} — длинные строки речи разрежутся на ${images.length - sLines.length} доп. кусков ✓`;
+    } else {
+      modeNote = `Речей: ${sLines.length} · Фоток: ${images.length} — лишние ${sLines.length - images.length} строк речи растворятся в соседних ✓`;
+    }
+  } else if (hasImages) {
     const max = Math.max(sLines.length, images.length);
     pairs = Array.from({ length: max }, (_, i) => ({
       s: sLines[i],
@@ -148,7 +170,7 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
     countOk = sLines.length > 0 && sLines.length === images.length;
     modeNote = `Речей: ${sLines.length} · Фоток: ${images.length}` +
       (pLines.length ? ` · Промтов: ${pLines.length}` : '') +
-      (countOk ? ' — совпадает ✓' : ' — речь и фотки должны совпадать по количеству');
+      (countOk ? ' — совпадает ✓' : ' — речь и фотки должны совпадать (или включи «Большая история»)');
   } else if (bigStory) {
     // В режиме «большая история» главное — промты. Строк должно быть ≥ промтов.
     const max = Math.max(sLines.length, pLines.length);
@@ -187,7 +209,20 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
     setError('');
     setImporting(true);
     try {
-      if (hasImages) {
+      if (hasImages && bigStory) {
+        // Число сцен = число фото. Речь подгоняем через ту же бэковую
+        // логику, что и для промтов — подаём псевдо-промты (по одной
+        // строке на фото), получаем нужную длину речи, вешаем реальные
+        // промты и картинки по индексу.
+        const fakePrompts = images.map((_, i) => (pLines[i] || `image ${i + 1}`)).join('\n');
+        const { scenes: adapted } = await api.parseFiles(projectId, speechText, fakePrompts, { bigStory: true });
+        const scenes = adapted.map((s, i) => ({
+          voiceText: s.voiceText,
+          imagePrompt: pLines[i] ?? '',
+          imageDataUri: images[i]?.dataUri,
+        }));
+        await api.replaceScenesWithImages(projectId, scenes);
+      } else if (hasImages) {
         const scenes = sLines.map((voiceText, i) => ({
           voiceText,
           imagePrompt: pLines[i] ?? '',
@@ -236,26 +271,24 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
           onClear={() => setImages([])}
         />
 
-        {!hasImages && (
-          <label className="import-bigstory" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '14px 0 4px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={bigStory}
-              onChange={(e) => setBigStory(e.target.checked)}
-              style={{ marginTop: 3 }}
-            />
-            <span>
-              <b>Большая история</b>
-              <span className="muted small" style={{ display: 'block', marginTop: 2 }}>
-                Видеоряд не привязан к словам. Количество промтов = количество
-                сцен. Если строк сценария <b>больше</b> — лишние склеятся с
-                соседями. Если <b>меньше</b> — длинные строки разрежутся
-                пополам, чтобы заполнить недостающие сцены. Порядок сценария
-                сохраняется.
-              </span>
+        <label className="import-bigstory" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '14px 0 4px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={bigStory}
+            onChange={(e) => setBigStory(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            <b>Большая история</b>
+            <span className="muted small" style={{ display: 'block', marginTop: 2 }}>
+              Видеоряд не привязан к словам. Количество сцен задаётся
+              {hasImages ? ' количеством фото' : ' количеством промтов'}.
+              Если строк речи <b>больше</b> — лишние склеятся с соседями.
+              Если <b>меньше</b> — длинные разрежутся пополам, чтобы заполнить
+              недостающие сцены. Порядок речи сохраняется.
             </span>
-          </label>
-        )}
+          </span>
+        </label>
 
         {/* Можно и вставить текстом, если без файлов */}
         <details className="import-paste">
@@ -303,7 +336,7 @@ export default function ImportDialog({ projectId, onImported, onClose }) {
           <button onClick={doImport} disabled={!ready}>
             {importing
               ? 'Импортирую…'
-              : `Импортировать${countOk ? ` (${bigStory && !hasImages ? pLines.length : sLines.length})` : ''}`}
+              : `Импортировать${countOk ? ` (${hasImages ? images.length : (bigStory ? pLines.length : sLines.length)})` : ''}`}
           </button>
         </div>
       </div>
